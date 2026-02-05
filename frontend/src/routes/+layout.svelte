@@ -5,6 +5,9 @@
 	import { api } from '$lib/api/client';
 	import { player } from '$lib/stores/player';
 	import { get } from 'svelte/store';
+	import CommandPalette from '$lib/components/CommandPalette/CommandPalette.svelte';
+
+	let commandPaletteOpen = $state(false);
 
 	onMount(() => {
 		// Connect to SSE when the app mounts
@@ -14,16 +17,18 @@
 
 	// Global keyboard handler
 	async function handleKeydown(event: KeyboardEvent) {
-		// Ignore if typing in an input
-		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+		// Ignore if typing in an input (except for command palette shortcut)
+		const isInput = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+		
+		// Command palette: Cmd/Ctrl + K (always works)
+		if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+			event.preventDefault();
+			commandPaletteOpen = !commandPaletteOpen;
 			return;
 		}
 
-		// Command palette: Cmd/Ctrl + K
-		if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-			event.preventDefault();
-			// TODO: Open command palette
-			console.log('Open command palette');
+		// Skip other shortcuts if in input or command palette is open
+		if (isInput || commandPaletteOpen) {
 			return;
 		}
 
@@ -96,3 +101,5 @@
 <div class="min-h-screen bg-zinc-900 text-white">
 	<slot />
 </div>
+
+<CommandPalette bind:open={commandPaletteOpen} onClose={() => (commandPaletteOpen = false)} />
