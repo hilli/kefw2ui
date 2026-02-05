@@ -707,11 +707,77 @@ func (s *Server) handlePlayerSource(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleQueue handles queue operations (placeholder for Phase 2)
+// handleQueue handles queue operations
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	spk := s.manager.GetActiveSpeaker()
+	if spk == nil {
+		s.jsonError(w, "No active speaker", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Create Airable client to get the play queue
+	airable := kefw2.NewAirableClient(spk)
+	queueResp, err := airable.GetPlayQueue()
+	if err != nil {
+		// Queue might be empty or not available
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"tracks":       []any{},
+			"currentIndex": -1,
+		})
+		return
+	}
+
+	// Get current player data to identify current track
+	playerData, playerErr := spk.PlayerData(ctx)
+	currentTitle := ""
+	if playerErr == nil {
+		currentTitle = playerData.TrackRoles.Title
+	}
+
+	// Convert to simplified track list
+	tracks := make([]map[string]any, 0, len(queueResp.Rows))
+	currentIndex := -1
+	for i, item := range queueResp.Rows {
+		track := map[string]any{
+			"index":    i,
+			"title":    item.Title,
+			"id":       item.ID,
+			"path":     item.Path,
+			"icon":     item.Icon,
+			"type":     item.Type,
+			"duration": 0,
+		}
+
+		// Extract artist/album from media data if available
+		if item.MediaData != nil {
+			track["artist"] = item.MediaData.MetaData.Artist
+			track["album"] = item.MediaData.MetaData.Album
+			// Get duration from resources if available
+			if len(item.MediaData.Resources) > 0 {
+				track["duration"] = item.MediaData.Resources[0].Duration
+			}
+		}
+
+		// Try to match current track
+		if currentTitle != "" && item.Title == currentTitle {
+			currentIndex = i
+		}
+
+		tracks = append(tracks, track)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"tracks": []any{},
+		"tracks":       tracks,
+		"currentIndex": currentIndex,
 	})
 }
 

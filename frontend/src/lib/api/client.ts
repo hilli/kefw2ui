@@ -154,6 +154,24 @@ class APIClient {
 	async getSource(): Promise<{ source: string }> {
 		return this.request('/player/source');
 	}
+
+	// Queue
+	async getQueue(): Promise<{
+		tracks: Array<{
+			index: number;
+			title: string;
+			artist?: string;
+			album?: string;
+			id: string;
+			path: string;
+			icon?: string;
+			type: string;
+			duration: number;
+		}>;
+		currentIndex: number;
+	}> {
+		return this.request('/queue');
+	}
 }
 
 export const api = new APIClient();

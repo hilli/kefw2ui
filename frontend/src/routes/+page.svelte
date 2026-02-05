@@ -4,6 +4,7 @@
 	import SpeakerSwitcher from '$lib/components/SpeakerSwitcher/SpeakerSwitcher.svelte';
 	import SourceSelector from '$lib/components/SourceSelector/SourceSelector.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
+	import Queue from '$lib/components/Queue/Queue.svelte';
 	import { activeSpeaker } from '$lib/stores/speakers';
 </script>
 
@@ -33,11 +34,19 @@
 	</header>
 
 	<!-- Main Content -->
-	<main class="flex flex-1 flex-col items-center justify-center p-4">
-		<div class="w-full max-w-lg">
-			<NowPlaying />
-			<Controls />
+	<main class="flex flex-1 flex-col lg:flex-row">
+		<!-- Now Playing (centered on mobile, left on desktop) -->
+		<div class="flex flex-1 flex-col items-center justify-center p-4">
+			<div class="w-full max-w-lg">
+				<NowPlaying />
+				<Controls />
+			</div>
 		</div>
+
+		<!-- Queue Panel (below on mobile, right sidebar on desktop) -->
+		<aside class="w-full border-t border-zinc-800 p-4 lg:w-80 lg:border-l lg:border-t-0">
+			<Queue />
+		</aside>
 	</main>
 
 	<!-- Footer -->
