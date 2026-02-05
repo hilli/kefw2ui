@@ -1,0 +1,37 @@
+[Unit]
+Description=KEF W2 Speaker Controller UI
+Documentation=https://github.com/hilli/kefw2ui
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kefw2ui --bind 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Security hardening
+User=kefw2ui
+Group=kefw2ui
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# Allow reading config from user's home directory
+ReadWritePaths=/home/kefw2ui/.config/kefw2
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kefw2ui
+
+[Install]
+WantedBy=multi-user.target

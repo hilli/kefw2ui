@@ -1,0 +1,136 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  BINARY_NAME: kefw2ui
+  FRONTEND_DIR: frontend
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # Development
+  dev:
+    desc: Run development servers (backend + frontend)
+    deps: [frontend:install]
+    cmds:
+      - task: dev:backend &
+      - task: dev:frontend
+
+  dev:backend:
+    desc: Run Go backend with hot reload
+    cmds:
+      - go run .
+    env:
+      CGO_ENABLED: "0"
+
+  dev:frontend:
+    desc: Run frontend dev server
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - bun run dev
+
+  # Building
+  build:
+    desc: Build production binary with embedded frontend
+    deps: [frontend:build]
+    cmds:
+      - CGO_ENABLED=0 go build -o {{.BINARY_NAME}} .
+
+  frontend:install:
+    desc: Install frontend dependencies
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - bun install
+    sources:
+      - package.json
+      - bun.lockb
+    generates:
+      - node_modules/**/*
+
+  frontend:build:
+    desc: Build frontend for production
+    dir: "{{.FRONTEND_DIR}}"
+    deps: [frontend:install]
+    cmds:
+      - bun run build
+    sources:
+      - src/**/*
+      - static/**/*
+      - svelte.config.js
+      - vite.config.ts
+      - tailwind.config.js
+    generates:
+      - build/**/*
+
+  frontend:check:
+    desc: Run svelte-check
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - bun run check
+
+  # Docker
+  docker:build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t kefw2ui .
+
+  docker:run:
+    desc: Run Docker container
+    cmds:
+      - docker compose up
+
+  docker:run:detached:
+    desc: Run Docker container in background
+    cmds:
+      - docker compose up -d
+
+  docker:stop:
+    desc: Stop Docker container
+    cmds:
+      - docker compose down
+
+  # Testing
+  test:
+    desc: Run Go tests
+    cmds:
+      - go test -v ./...
+
+  test:coverage:
+    desc: Run Go tests with coverage
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+
+  # Linting
+  lint:
+    desc: Run linters
+    cmds:
+      - golangci-lint run
+      - task: frontend:check
+
+  # Cleaning
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -f {{.BINARY_NAME}}
+      - rm -rf {{.FRONTEND_DIR}}/build
+      - rm -rf {{.FRONTEND_DIR}}/node_modules
+      - rm -rf {{.FRONTEND_DIR}}/.svelte-kit
+
+  # Utilities
+  run:
+    desc: Run the built binary
+    deps: [build]
+    cmds:
+      - ./{{.BINARY_NAME}}
+
+  install:
+    desc: Install binary to /usr/local/bin
+    deps: [build]
+    cmds:
+      - sudo cp {{.BINARY_NAME}} /usr/local/bin/
+      - echo "Installed to /usr/local/bin/{{.BINARY_NAME}}"

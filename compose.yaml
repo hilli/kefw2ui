@@ -1,0 +1,20 @@
+# KEF W2 Speaker Controller UI
+
+services:
+  kefw2ui:
+    build: .
+    image: kefw2ui:latest
+    container_name: kefw2ui
+    ports:
+      - "8080:8080"
+    volumes:
+      # Share config with CLI - adjust path for your OS
+      # Linux: ~/.config/kefw2
+      # macOS: ~/Library/Application Support/kefw2
+      - ${HOME}/.config/kefw2:/home/kefw2ui/.config/kefw2
+    # network_mode: host is required for mDNS speaker discovery
+    # If you don't need auto-discovery, you can remove this and manually add speakers
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}

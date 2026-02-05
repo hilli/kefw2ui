@@ -380,7 +380,7 @@ kefw2ui/
 ├── Dockerfile              # Multi-stage build
 ├── compose.yaml            # Docker Compose
 ├── kefw2ui.service         # Systemd unit
-├── Makefile                # Build commands
+├── Taskfile.yaml           # Build commands (go-task)
 ├── README.md
 └── go.mod
 ```
@@ -389,10 +389,10 @@ kefw2ui/
 
 ```bash
 # Development (hot reload)
-make dev          # Runs backend + Vite dev server (bun)
+task dev          # Runs backend + Vite dev server (bun)
 
 # Production - Binary
-make build        # Single binary with embedded frontend
+task build        # Single binary with embedded frontend
 ./kefw2ui --port 8080 --bind 0.0.0.0
 
 # Production - Docker

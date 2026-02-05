@@ -1,0 +1,38 @@
+# Dependencies
+frontend/node_modules/
+
+# Build outputs
+frontend/build/
+frontend/.svelte-kit/
+dist/
+kefw2ui
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Task runner
+.task/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Temporary files
+tmp/
+temp/
