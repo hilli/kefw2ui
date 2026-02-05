@@ -1,18 +1,73 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#3b3b3b"/>
-      <stop offset="100%" style="stop-color:#1a1a1a"/>
-    </linearGradient>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <!-- Background -->
-  <rect width="32" height="32" rx="6" fill="url(#bg)"/>
-  <!-- Speaker cone outer -->
-  <circle cx="16" cy="16" r="10" fill="#2a2a2a" stroke="#4a4a4a" stroke-width="0.5"/>
-  <!-- Speaker cone middle -->
-  <circle cx="16" cy="16" r="6" fill="#222" stroke="#3a3a3a" stroke-width="0.5"/>
-  <!-- Speaker cone inner (dust cap) -->
-  <circle cx="16" cy="16" r="3" fill="#1a1a1a" stroke="#333" stroke-width="0.5"/>
-  <!-- Highlight -->
-  <ellipse cx="14" cy="14" rx="2" ry="1.5" fill="rgba(255,255,255,0.1)" transform="rotate(-45 14 14)"/>
+  <rect width="512" height="512" fill="#0d1117"/>
+  
+  <!-- Outer circle -->
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#ffffff" stroke-width="12"/>
+  
+  <!-- KEF text as paths (converted from Arial Bold) -->
+  <g transform="translate(180, 115)">
+    <!-- K -->
+    <path d="M0 0h12v25h1l18-25h15l-22 28 24 32h-16l-19-27h-1v27h-12z" fill="#fff"/>
+    <!-- E -->
+    <path d="M55 0h35v10h-23v14h21v10h-21v16h24v10h-36z" fill="#fff"/>
+    <!-- F -->
+    <path d="M100 0h34v10h-22v14h20v10h-20v26h-12z" fill="#fff"/>
+  </g>
+  
+  <!-- Top bar/shelf -->
+  <path d="M120 175 L392 175" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  <line x1="256" y1="175" x2="256" y2="195" stroke="#ffffff" stroke-width="4"/>
+  <circle cx="256" cy="203" r="8" fill="#ffffff"/>
+  
+  <!-- Small indicator dots -->
+  <circle cx="220" cy="190" r="4" fill="#ffffff"/>
+  <circle cx="240" cy="190" r="4" fill="#ffffff"/>
+  <circle cx="272" cy="190" r="4" fill="#ffffff"/>
+  <circle cx="292" cy="190" r="4" fill="#ffffff"/>
+  
+  <!-- Left speaker/control - D-pad style -->
+  <g transform="translate(150, 275)">
+    <circle cx="0" cy="0" r="50" fill="none" stroke="#ffffff" stroke-width="4"/>
+    <!-- D-pad cross -->
+    <rect x="-8" y="-30" width="16" height="60" rx="3" fill="#ffffff"/>
+    <rect x="-30" y="-8" width="60" height="16" rx="3" fill="#ffffff"/>
+  </g>
+  
+  <!-- Right speaker/control - 4 buttons style -->
+  <g transform="translate(362, 275)">
+    <circle cx="0" cy="0" r="50" fill="none" stroke="#ffffff" stroke-width="4"/>
+    <!-- 4 button layout -->
+    <circle cx="0" cy="-22" r="10" fill="#ffffff"/>
+    <circle cx="0" cy="22" r="10" fill="#ffffff"/>
+    <circle cx="-22" cy="0" r="10" fill="#ffffff"/>
+    <circle cx="22" cy="0" r="10" fill="#ffffff"/>
+  </g>
+  
+  <!-- Bottom analog sticks -->
+  <g transform="translate(200, 355)">
+    <circle cx="0" cy="0" r="28" fill="none" stroke="#ffffff" stroke-width="4"/>
+    <circle cx="0" cy="0" r="14" fill="none" stroke="#ffffff" stroke-width="3"/>
+  </g>
+  
+  <g transform="translate(312, 355)">
+    <circle cx="0" cy="0" r="28" fill="none" stroke="#ffffff" stroke-width="4"/>
+    <circle cx="0" cy="0" r="14" fill="none" stroke="#ffffff" stroke-width="3"/>
+  </g>
+  
+  <!-- Bottom curved lines (triggers) -->
+  <path d="M130 330 Q105 365 130 400" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <path d="M382 330 Q407 365 382 400" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  
+  <!-- W2 text as paths -->
+  <g transform="translate(175, 410)">
+    <!-- W -->
+    <path d="M0 0h12l10 38h1l12-38h10l12 38h1l10-38h12l-16 55h-13l-11-36h-1l-11 36h-13z" fill="#fff"/>
+    <!-- 2 -->
+    <path d="M95 0h32c12 0 20 8 20 18 0 12-10 22-22 32h22v10h-52v-8c18-15 32-26 32-35 0-5-3-9-10-9h-22z" fill="#fff"/>
+  </g>
+  
+  <!-- Decorative dashes around W2 -->
+  <line x1="140" y1="435" x2="165" y2="435" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  <line x1="347" y1="435" x2="372" y2="435" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
 </svg>
