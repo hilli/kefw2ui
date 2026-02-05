@@ -31,7 +31,7 @@ tasks:
     desc: Run frontend dev server
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - bun run dev
+      - npm run dev
 
   # Building
   build:
@@ -44,10 +44,10 @@ tasks:
     desc: Install frontend dependencies
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - bun install
+      - npm install
     sources:
       - package.json
-      - bun.lockb
+      - package-lock.json
     generates:
       - node_modules/**/*
 
@@ -56,7 +56,7 @@ tasks:
     dir: "{{.FRONTEND_DIR}}"
     deps: [frontend:install]
     cmds:
-      - bun run build
+      - npm run build
     sources:
       - src/**/*
       - static/**/*
@@ -70,7 +70,7 @@ tasks:
     desc: Run svelte-check
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - bun run check
+      - npm run check
 
   # Docker
   docker:build:

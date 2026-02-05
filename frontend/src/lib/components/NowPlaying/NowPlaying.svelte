@@ -12,7 +12,8 @@
 		return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 	}
 
-	$: progress = $player.duration > 0 ? ($player.position / $player.duration) * 100 : 0;
+	// Use Svelte 5 $derived for reactive progress calculation
+	const progress = $derived($player.duration > 0 ? ($player.position / $player.duration) * 100 : 0);
 </script>
 
 <div class="flex flex-col items-center gap-6 p-6">
@@ -66,11 +67,23 @@
 	</div>
 
 	<!-- Progress Bar -->
-	<div class="w-full max-w-md">
-		<div class="relative h-1 w-full overflow-hidden rounded-full bg-zinc-700">
+	<div class="group w-full max-w-md">
+		<div 
+			class="relative h-1.5 w-full cursor-pointer overflow-hidden rounded-full bg-zinc-700 transition-all group-hover:h-2"
+			role="progressbar"
+			aria-valuenow={progress}
+			aria-valuemin={0}
+			aria-valuemax={100}
+			aria-label="Playback progress"
+		>
 			<div
-				class="absolute left-0 top-0 h-full rounded-full bg-white transition-all duration-300"
+				class="absolute left-0 top-0 h-full rounded-full bg-white transition-all duration-150"
 				style="width: {progress}%"
+			></div>
+			<!-- Thumb indicator on hover -->
+			<div 
+				class="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white opacity-0 shadow-md transition-opacity group-hover:opacity-100"
+				style="left: calc({progress}% - 6px)"
 			></div>
 		</div>
 		<div class="mt-2 flex justify-between text-xs text-zinc-500">

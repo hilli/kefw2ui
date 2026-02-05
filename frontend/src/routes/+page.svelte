@@ -2,7 +2,9 @@
 	import NowPlaying from '$lib/components/NowPlaying/NowPlaying.svelte';
 	import Controls from '$lib/components/Controls/Controls.svelte';
 	import SpeakerSwitcher from '$lib/components/SpeakerSwitcher/SpeakerSwitcher.svelte';
+	import SourceSelector from '$lib/components/SourceSelector/SourceSelector.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
+	import { activeSpeaker } from '$lib/stores/speakers';
 </script>
 
 <svelte:head>
@@ -13,9 +15,21 @@
 	<!-- Header -->
 	<header class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
 		<div class="flex items-center gap-4">
+			<!-- KEF Logo - proxied from speaker -->
+			{#if $activeSpeaker}
+				<img 
+					src="/api/speaker/logo" 
+					alt="KEF" 
+					class="h-6 w-auto opacity-80 invert"
+					onerror={(e) => (e.currentTarget as HTMLImageElement).style.display = 'none'}
+				/>
+			{/if}
 			<SpeakerSwitcher />
 		</div>
-		<ConnectionStatus />
+		<div class="flex items-center gap-3">
+			<SourceSelector />
+			<ConnectionStatus />
+		</div>
 	</header>
 
 	<!-- Main Content -->

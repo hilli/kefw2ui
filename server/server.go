@@ -76,6 +76,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/speakers/discover", s.handleSpeakersDiscover)
 	s.mux.HandleFunc("/api/speakers/add", s.handleSpeakersAdd)
 	s.mux.HandleFunc("/api/speaker", s.handleSpeaker)
+	s.mux.HandleFunc("/api/speaker/logo", s.handleSpeakerLogo)
 
 	// Player controls
 	s.mux.HandleFunc("/api/player", s.handlePlayer)
@@ -375,6 +376,50 @@ func (s *Server) handleSpeakerSet(w http.ResponseWriter, r *http.Request) {
 
 	// Return the new active speaker info
 	s.handleSpeakerGet(w, r)
+}
+
+// handleSpeakerLogo proxies the KEF logo from the active speaker
+func (s *Server) handleSpeakerLogo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	spk := s.manager.GetActiveSpeaker()
+	if spk == nil {
+		http.Error(w, "No active speaker", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Fetch the logo from the speaker
+	logoURL := fmt.Sprintf("http://%s/style/images/logo-kef.png", spk.IPAddress)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, logoURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to fetch logo", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "Logo not available", resp.StatusCode)
+		return
+	}
+
+	// Copy headers and body
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 24 hours
+	io.Copy(w, resp.Body)
 }
 
 // handlePlayer returns the current player state

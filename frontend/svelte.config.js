@@ -17,6 +17,16 @@ const config = {
 			$components: 'src/lib/components',
 			$stores: 'src/lib/stores',
 			$api: 'src/lib/api'
+		},
+		prerender: {
+			handleHttpError: ({ path, message }) => {
+				// Ignore missing static assets during prerendering
+				if (path.endsWith('.png') || path.endsWith('.ico')) {
+					console.warn(`Warning: ${message}`);
+					return;
+				}
+				throw new Error(message);
+			}
 		}
 	}
 };
