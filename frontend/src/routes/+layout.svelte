@@ -6,6 +6,7 @@
 	import { player } from '$lib/stores/player';
 	import { get } from 'svelte/store';
 	import CommandPalette from '$lib/components/CommandPalette/CommandPalette.svelte';
+	import { initMediaSession, updateMediaSessionMetadata, cleanupMediaSession } from '$lib/api/mediaSession';
 
 	interface Props {
 		children: Snippet;
@@ -17,7 +18,20 @@
 	onMount(() => {
 		// Connect to SSE when the app mounts
 		const cleanup = connectSSE();
-		return cleanup;
+
+		// Initialize Media Session API for OS-level media controls
+		initMediaSession();
+
+		// Subscribe to player state changes and update Media Session
+		const unsubscribe = player.subscribe((state) => {
+			updateMediaSessionMetadata(state);
+		});
+
+		return () => {
+			cleanup();
+			unsubscribe();
+			cleanupMediaSession();
+		};
 	});
 
 	// Global keyboard handler
