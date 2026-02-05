@@ -2,6 +2,9 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { connectSSE } from '$lib/api/sse';
+	import { api } from '$lib/api/client';
+	import { player } from '$lib/stores/player';
+	import { get } from 'svelte/store';
 
 	onMount(() => {
 		// Connect to SSE when the app mounts
@@ -10,7 +13,7 @@
 	});
 
 	// Global keyboard handler
-	function handleKeydown(event: KeyboardEvent) {
+	async function handleKeydown(event: KeyboardEvent) {
 		// Ignore if typing in an input
 		if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
 			return;
@@ -27,40 +30,69 @@
 		switch (event.key) {
 			case ' ':
 				event.preventDefault();
-				// TODO: Play/Pause
-				console.log('Play/Pause');
+				try {
+					await api.playPause();
+				} catch (error) {
+					console.error('Play/pause failed:', error);
+				}
 				break;
+
 			case 'ArrowUp':
 				event.preventDefault();
-				// TODO: Volume up
-				console.log('Volume up');
+				try {
+					const currentPlayer = get(player);
+					const step = event.shiftKey ? 1 : 5;
+					const newVolume = Math.min(100, currentPlayer.volume + step);
+					await api.setVolume(newVolume);
+				} catch (error) {
+					console.error('Volume up failed:', error);
+				}
 				break;
+
 			case 'ArrowDown':
 				event.preventDefault();
-				// TODO: Volume down
-				console.log('Volume down');
+				try {
+					const currentPlayer = get(player);
+					const step = event.shiftKey ? 1 : 5;
+					const newVolume = Math.max(0, currentPlayer.volume - step);
+					await api.setVolume(newVolume);
+				} catch (error) {
+					console.error('Volume down failed:', error);
+				}
 				break;
+
 			case 'ArrowLeft':
 				event.preventDefault();
-				// TODO: Previous track
-				console.log('Previous track');
+				try {
+					await api.previousTrack();
+				} catch (error) {
+					console.error('Previous track failed:', error);
+				}
 				break;
+
 			case 'ArrowRight':
 				event.preventDefault();
-				// TODO: Next track
-				console.log('Next track');
+				try {
+					await api.nextTrack();
+				} catch (error) {
+					console.error('Next track failed:', error);
+				}
 				break;
+
 			case 'm':
 			case 'M':
-				// TODO: Toggle mute
-				console.log('Toggle mute');
+				try {
+					await api.toggleMute();
+				} catch (error) {
+					console.error('Mute toggle failed:', error);
+				}
 				break;
 		}
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
-<div class="min-h-screen bg-background text-foreground">
+<div class="min-h-screen bg-zinc-900 text-white">
 	<slot />
 </div>

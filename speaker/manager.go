@@ -3,6 +3,7 @@ package speaker
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/hilli/go-kef-w2/kefw2"
 )
@@ -13,6 +14,7 @@ type Manager struct {
 	speakers      map[string]*kefw2.KEFSpeaker
 	activeSpeaker *kefw2.KEFSpeaker
 	eventClient   *kefw2.EventClient
+	eventCancel   context.CancelFunc
 
 	// Event callbacks
 	onEvent func(event kefw2.Event)
@@ -34,7 +36,8 @@ func (m *Manager) SetEventCallback(cb func(event kefw2.Event)) {
 
 // Discover finds speakers on the network using mDNS
 func (m *Manager) Discover(ctx context.Context) ([]*kefw2.KEFSpeaker, error) {
-	speakers, err := kefw2.DiscoverSpeakers(ctx)
+	// Use 5 second discovery timeout
+	speakers, err := kefw2.DiscoverSpeakers(ctx, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +56,6 @@ func (m *Manager) Discover(ctx context.Context) ([]*kefw2.KEFSpeaker, error) {
 func (m *Manager) AddSpeaker(ctx context.Context, ip string) (*kefw2.KEFSpeaker, error) {
 	speaker, err := kefw2.NewSpeaker(ip)
 	if err != nil {
-		return nil, err
-	}
-
-	// Verify speaker is reachable by getting info
-	if err := speaker.Update(ctx); err != nil {
 		return nil, err
 	}
 
@@ -93,8 +91,12 @@ func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
 	defer m.mu.Unlock()
 
 	// Stop existing event client
+	if m.eventCancel != nil {
+		m.eventCancel()
+		m.eventCancel = nil
+	}
 	if m.eventClient != nil {
-		m.eventClient.Stop()
+		m.eventClient.Close()
 		m.eventClient = nil
 	}
 
@@ -104,9 +106,6 @@ func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
 		var err error
 		speaker, err = kefw2.NewSpeaker(ip)
 		if err != nil {
-			return err
-		}
-		if err := speaker.Update(ctx); err != nil {
 			return err
 		}
 		m.speakers[ip] = speaker
@@ -125,7 +124,9 @@ func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
 	m.eventClient = eventClient
 
 	// Start listening for events in background
-	go m.listenForEvents(ctx)
+	eventCtx, cancel := context.WithCancel(context.Background())
+	m.eventCancel = cancel
+	go m.listenForEvents(eventCtx)
 
 	return nil
 }
@@ -140,17 +141,27 @@ func (m *Manager) listenForEvents(ctx context.Context) {
 		return
 	}
 
-	// Start the event client
-	go client.Start(ctx)
+	// Start the event client in a goroutine
+	go func() {
+		_ = client.Start(ctx)
+	}()
 
 	// Forward events
-	for event := range client.Events() {
-		m.mu.RLock()
-		cb := m.onEvent
-		m.mu.RUnlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-client.Events():
+			if !ok {
+				return
+			}
+			m.mu.RLock()
+			cb := m.onEvent
+			m.mu.RUnlock()
 
-		if cb != nil {
-			cb(event)
+			if cb != nil {
+				cb(event)
+			}
 		}
 	}
 }
@@ -160,8 +171,12 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.eventCancel != nil {
+		m.eventCancel()
+		m.eventCancel = nil
+	}
 	if m.eventClient != nil {
-		m.eventClient.Stop()
+		m.eventClient.Close()
 		m.eventClient = nil
 	}
 }
