@@ -1,12 +1,17 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
+	import { onMount, type Snippet } from 'svelte';
 	import { connectSSE } from '$lib/api/sse';
 	import { api } from '$lib/api/client';
 	import { player } from '$lib/stores/player';
 	import { get } from 'svelte/store';
 	import CommandPalette from '$lib/components/CommandPalette/CommandPalette.svelte';
 
+	interface Props {
+		children: Snippet;
+	}
+
+	let { children }: Props = $props();
 	let commandPaletteOpen = $state(false);
 
 	onMount(() => {
@@ -99,7 +104,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="min-h-screen bg-zinc-900 text-white">
-	<slot />
+	{@render children()}
 </div>
 
 <CommandPalette bind:open={commandPaletteOpen} onClose={() => (commandPaletteOpen = false)} />

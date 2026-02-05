@@ -138,7 +138,11 @@
 
 {#if open}
 	<!-- Backdrop -->
-	<div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" onclick={onClose}></div>
+	<button
+		class="fixed inset-0 z-50 cursor-default bg-black/60 backdrop-blur-sm"
+		onclick={onClose}
+		aria-label="Close command palette"
+	></button>
 
 	<!-- Palette -->
 	<div
