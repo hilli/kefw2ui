@@ -4,8 +4,11 @@ import {
 	updateMute,
 	updatePlayerData,
 	updateSource,
-	updatePosition
+	updatePosition,
+	updatePowerState
 } from '$lib/stores/player';
+import { activeSpeaker } from '$lib/stores/speakers';
+import { queueRefresh } from '$lib/stores/queue';
 
 let eventSource: EventSource | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -110,11 +113,32 @@ function handleEvent(message: { type: string; data: unknown }) {
 				}
 			);
 			break;
-		case 'source':
-			updateSource((message.data as { source: string }).source);
+		case 'source': {
+			const source = (message.data as { source: string }).source;
+			updateSource(source);
+			// When source changes to standby, speaker is off
+			updatePowerState(source !== 'standby');
+			break;
+		}
+		case 'power':
+			updatePowerState((message.data as { status: string }).status === 'powerOn');
 			break;
 		case 'playTime':
 			updatePosition((message.data as { position: number }).position);
+			break;
+		case 'speaker': {
+			const data = message.data as { ip: string; name: string; model: string };
+			activeSpeaker.set({
+				ip: data.ip,
+				name: data.name,
+				model: data.model,
+				active: true
+			});
+			break;
+		}
+		case 'queue':
+			// Queue changed, trigger a refresh
+			queueRefresh.refresh();
 			break;
 		default:
 			console.log('Unknown event type:', message.type);

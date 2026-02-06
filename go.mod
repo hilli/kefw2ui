@@ -3,7 +3,7 @@ module github.com/hilli/kefw2ui
 go 1.25.6
 
 require (
-	github.com/hilli/go-kef-w2 v0.2.4
+	github.com/hilli/go-kef-w2 v0.2.5
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -19,3 +19,6 @@ require (
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
 )
+
+// Use local kefw2 package for development
+replace github.com/hilli/go-kef-w2 => ../

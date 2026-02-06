@@ -54,7 +54,8 @@ func (m *Manager) Discover(ctx context.Context) ([]*kefw2.KEFSpeaker, error) {
 
 // AddSpeaker manually adds a speaker by IP address
 func (m *Manager) AddSpeaker(ctx context.Context, ip string) (*kefw2.KEFSpeaker, error) {
-	speaker, err := kefw2.NewSpeaker(ip)
+	// Use a longer timeout for manual add - speakers in standby can be slow to respond
+	speaker, err := kefw2.NewSpeaker(ip, kefw2.WithTimeout(10*time.Second))
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +65,23 @@ func (m *Manager) AddSpeaker(ctx context.Context, ip string) (*kefw2.KEFSpeaker,
 	m.mu.Unlock()
 
 	return speaker, nil
+}
+
+// AddConfiguredSpeaker adds a speaker from config without connecting
+// This is used at startup to preload known speakers before discovery
+func (m *Manager) AddConfiguredSpeaker(ip, name, model string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Only add if not already present (discovery might have found it)
+	if _, exists := m.speakers[ip]; !exists {
+		// Create a placeholder speaker - will be fully initialized on connect
+		m.speakers[ip] = &kefw2.KEFSpeaker{
+			IPAddress: ip,
+			Name:      name,
+			Model:     model,
+		}
+	}
 }
 
 // GetSpeakers returns all known speakers
@@ -102,9 +120,9 @@ func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
 
 	speaker, ok := m.speakers[ip]
 	if !ok {
-		// Try to add it
+		// Try to add it - use longer timeout for speakers in standby
 		var err error
-		speaker, err = kefw2.NewSpeaker(ip)
+		speaker, err = kefw2.NewSpeaker(ip, kefw2.WithTimeout(10*time.Second))
 		if err != nil {
 			return err
 		}

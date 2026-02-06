@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount, type Snippet } from 'svelte';
+	import { browser } from '$app/environment';
 	import { connectSSE } from '$lib/api/sse';
 	import { api } from '$lib/api/client';
 	import { player } from '$lib/stores/player';
@@ -8,6 +9,8 @@
 	import { get } from 'svelte/store';
 	import CommandPalette from '$lib/components/CommandPalette/CommandPalette.svelte';
 	import { initMediaSession, updateMediaSessionMetadata, cleanupMediaSession } from '$lib/api/mediaSession';
+	import { RefreshCw } from 'lucide-svelte';
+	import { browseNavigation } from '$lib/stores/browseNavigation';
 
 	interface Props {
 		children: Snippet;
@@ -16,6 +19,8 @@
 	let { children }: Props = $props();
 	let commandPaletteOpen = $state(false);
 	let showShortcuts = $state(false);
+	let updateAvailable = $state(false);
+	let swRegistration = $state<ServiceWorkerRegistration | null>(null);
 
 	onMount(() => {
 		// Connect to SSE when the app mounts
@@ -29,12 +34,63 @@
 			updateMediaSessionMetadata(state);
 		});
 
+		// Register service worker for PWA
+		registerServiceWorker();
+
 		return () => {
 			cleanup();
 			unsubscribe();
 			cleanupMediaSession();
 		};
 	});
+
+	async function registerServiceWorker() {
+		if (!browser || !('serviceWorker' in navigator)) {
+			return;
+		}
+
+		try {
+			const registration = await navigator.serviceWorker.register('/service-worker.js', {
+				scope: '/'
+			});
+			swRegistration = registration;
+
+			// Check for updates periodically
+			setInterval(() => {
+				registration.update();
+			}, 60 * 1000); // Check every minute
+
+			// Listen for new service worker waiting to activate
+			registration.addEventListener('updatefound', () => {
+				const newWorker = registration.installing;
+				if (!newWorker) return;
+
+				newWorker.addEventListener('statechange', () => {
+					if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+						// New version available
+						updateAvailable = true;
+					}
+				});
+			});
+
+			// Handle controller change (when new SW takes over)
+			navigator.serviceWorker.addEventListener('controllerchange', () => {
+				// Reload to get the new version
+				window.location.reload();
+			});
+
+			console.log('Service worker registered');
+		} catch (error) {
+			console.error('Service worker registration failed:', error);
+		}
+	}
+
+	function applyUpdate() {
+		if (swRegistration?.waiting) {
+			// Tell the waiting service worker to skip waiting
+			swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+		}
+	}
 
 	// Quick switch to speaker by index (1-9)
 	async function switchToSpeakerByIndex(index: number) {
@@ -147,15 +203,35 @@
 				break;
 
 			case '?':
-			case '/':
 				event.preventDefault();
 				showShortcuts = true;
+				break;
+
+			case '/':
+				event.preventDefault();
+				browseNavigation.focusSearch();
 				break;
 		}
 	}
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+
+<!-- Update Available Banner -->
+{#if updateAvailable}
+	<div class="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 transform">
+		<div class="flex items-center gap-3 rounded-lg border border-green-500/30 bg-green-900/90 px-4 py-2 shadow-lg backdrop-blur-sm">
+			<RefreshCw class="h-4 w-4 text-green-400" />
+			<span class="text-sm text-green-100">A new version is available</span>
+			<button
+				class="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-green-500"
+				onclick={applyUpdate}
+			>
+				Update
+			</button>
+		</div>
+	</div>
+{/if}
 
 <div class="min-h-screen bg-zinc-900 text-white">
 	{@render children()}
@@ -194,6 +270,7 @@
 			<div>
 				<h3 class="mb-2 text-xs font-medium uppercase text-zinc-400">Navigation</h3>
 				<div class="grid grid-cols-2 gap-2">
+					<div class="flex justify-between"><span class="text-zinc-400">Search Media</span><kbd class="rounded bg-zinc-700 px-2 py-0.5 text-xs">/</kbd></div>
 					<div class="flex justify-between"><span class="text-zinc-400">Command Palette</span><kbd class="rounded bg-zinc-700 px-2 py-0.5 text-xs">⌘K</kbd></div>
 					<div class="flex justify-between"><span class="text-zinc-400">Speaker 1-9</span><kbd class="rounded bg-zinc-700 px-2 py-0.5 text-xs">1-9</kbd></div>
 					<div class="flex justify-between"><span class="text-zinc-400">This Help</span><kbd class="rounded bg-zinc-700 px-2 py-0.5 text-xs">?</kbd></div>

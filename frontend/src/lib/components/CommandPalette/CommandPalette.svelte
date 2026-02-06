@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { player, updateSource } from '$lib/stores/player';
 	import { speakers, activeSpeaker, setActiveSpeaker } from '$lib/stores/speakers';
+	import { browseNavigation } from '$lib/stores/browseNavigation';
 	import {
 		Search,
 		Play,
@@ -32,6 +33,11 @@
 
 	// Command definitions
 	const commands = [
+		// Navigation / Search
+		{ id: 'search-media', label: 'Search Media', keywords: 'search media upnp browse find music', icon: Search, action: () => browseNavigation.focusSearch('upnp') },
+		{ id: 'search-radio', label: 'Search Radio', keywords: 'search radio stations fm am', icon: Search, action: () => browseNavigation.focusSearch('radio') },
+		{ id: 'search-podcasts', label: 'Search Podcasts', keywords: 'search podcasts shows episodes', icon: Search, action: () => browseNavigation.focusSearch('podcasts') },
+		
 		// Playback
 		{ id: 'play', label: 'Play / Pause', keywords: 'play pause toggle', icon: Play, action: () => api.playPause() },
 		{ id: 'next', label: 'Next Track', keywords: 'next skip forward', icon: SkipForward, action: () => api.nextTrack() },

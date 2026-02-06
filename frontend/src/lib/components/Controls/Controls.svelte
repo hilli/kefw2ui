@@ -9,15 +9,43 @@
 		SkipForward,
 		Volume2,
 		VolumeX,
-		Volume1
+		Volume1,
+		Power,
+		Shuffle,
+		Repeat,
+		Repeat1
 	} from 'lucide-svelte';
 
-	let volumeChanging = false;
-	let volumeValue = $player.volume;
+	// Local state for volume control
+	let volumeChanging = $state(false);
+	let volumeValue = $state($player.volume);
+	let isPowerChanging = $state(false);
+
+	// Play mode state
+	let shuffle = $state(false);
+	let repeat = $state<'off' | 'one' | 'all'>('off');
+	let modeLoading = $state(false);
 
 	// Sync local volume with store when not dragging
-	$: if (!volumeChanging) {
-		volumeValue = $player.volume;
+	$effect(() => {
+		if (!volumeChanging) {
+			volumeValue = $player.volume;
+		}
+	});
+
+	// Load play mode on mount
+	$effect(() => {
+		loadPlayMode();
+	});
+
+	async function loadPlayMode() {
+		try {
+			const mode = await api.getPlayMode();
+			shuffle = mode.shuffle;
+			repeat = mode.repeat;
+		} catch (e) {
+			console.error('Failed to load play mode:', e);
+		}
 	}
 
 	async function handlePlayPause() {
@@ -44,7 +72,7 @@
 		}
 	}
 
-	async function handleVolumeChange(event: Event) {
+	function handleVolumeChange(event: Event) {
 		const target = event.target as HTMLInputElement;
 		volumeValue = parseInt(target.value, 10);
 	}
@@ -66,18 +94,71 @@
 		}
 	}
 
-	function getVolumeIcon(volume: number, muted: boolean) {
-		if (muted || volume === 0) return VolumeX;
-		if (volume < 50) return Volume1;
-		return Volume2;
+	async function handlePowerToggle() {
+		if (isPowerChanging) return;
+		isPowerChanging = true;
+		try {
+			await api.togglePower();
+		} catch (error) {
+			console.error('Power toggle failed:', error);
+		} finally {
+			isPowerChanging = false;
+		}
 	}
 
-	$: VolumeIcon = getVolumeIcon($player.volume, $player.muted);
+	async function handleShuffleToggle() {
+		if (modeLoading) return;
+		modeLoading = true;
+		try {
+			const result = await api.toggleShuffle();
+			shuffle = result.shuffle;
+			repeat = result.repeat;
+		} catch (error) {
+			console.error('Shuffle toggle failed:', error);
+		} finally {
+			modeLoading = false;
+		}
+	}
+
+	async function handleRepeatCycle() {
+		if (modeLoading) return;
+		modeLoading = true;
+		try {
+			const result = await api.cycleRepeat();
+			shuffle = result.shuffle;
+			repeat = result.repeat;
+		} catch (error) {
+			console.error('Repeat cycle failed:', error);
+		} finally {
+			modeLoading = false;
+		}
+	}
+
+	// Derived values
+	const volumePercent = $derived(volumeValue);
 </script>
 
 <div class="flex flex-col items-center gap-6 p-6">
 	<!-- Playback Controls -->
-	<div class="flex items-center justify-center gap-6">
+	<div class="flex items-center justify-center gap-4">
+		<!-- Shuffle Button -->
+		<button
+			onclick={handleShuffleToggle}
+			disabled={modeLoading}
+			class={cn(
+				'rounded-full p-2 transition-colors',
+				shuffle
+					? 'text-green-500 hover:bg-zinc-800 hover:text-green-400'
+					: 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
+				'disabled:cursor-not-allowed disabled:opacity-50'
+			)}
+			aria-label={shuffle ? 'Disable shuffle' : 'Enable shuffle'}
+			title={shuffle ? 'Shuffle on' : 'Shuffle off'}
+		>
+			<Shuffle class="h-4 w-4" />
+		</button>
+
 		<button
 			onclick={handlePrevious}
 			class={cn(
@@ -102,7 +183,7 @@
 			{#if $player.state === 'playing'}
 				<Pause class="h-8 w-8" />
 			{:else}
-				<Play class="h-8 w-8 ml-1" />
+				<Play class="ml-1 h-8 w-8" />
 			{/if}
 		</button>
 
@@ -117,6 +198,28 @@
 		>
 			<SkipForward class="h-6 w-6" />
 		</button>
+
+		<!-- Repeat Button -->
+		<button
+			onclick={handleRepeatCycle}
+			disabled={modeLoading}
+			class={cn(
+				'rounded-full p-2 transition-colors',
+				repeat !== 'off'
+					? 'text-green-500 hover:bg-zinc-800 hover:text-green-400'
+					: 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
+				'disabled:cursor-not-allowed disabled:opacity-50'
+			)}
+			aria-label={repeat === 'off' ? 'Enable repeat all' : repeat === 'all' ? 'Enable repeat one' : 'Disable repeat'}
+			title={repeat === 'off' ? 'Repeat off' : repeat === 'all' ? 'Repeat all' : 'Repeat one'}
+		>
+			{#if repeat === 'one'}
+				<Repeat1 class="h-4 w-4" />
+			{:else}
+				<Repeat class="h-4 w-4" />
+			{/if}
+		</button>
 	</div>
 
 	<!-- Volume Control -->
@@ -130,38 +233,70 @@
 			)}
 			aria-label={$player.muted ? 'Unmute' : 'Mute'}
 		>
-			<svelte:component this={VolumeIcon} class="h-5 w-5" />
+			{#if $player.muted || $player.volume === 0}
+				<VolumeX class="h-5 w-5" />
+			{:else if $player.volume < 50}
+				<Volume1 class="h-5 w-5" />
+			{:else}
+				<Volume2 class="h-5 w-5" />
+			{/if}
 		</button>
 
-		<input
-			type="range"
-			min="0"
-			max="100"
-			bind:value={volumeValue}
-			onmousedown={() => (volumeChanging = true)}
-			ontouchstart={() => (volumeChanging = true)}
-			oninput={handleVolumeChange}
-			onmouseup={handleVolumeCommit}
-			ontouchend={handleVolumeCommit}
-			class={cn(
-				'h-1 w-full cursor-pointer appearance-none rounded-full bg-zinc-700',
-				'[&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4',
-				'[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full',
-				'[&::-webkit-slider-thumb]:bg-white',
-				'[&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4',
-				'[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white',
-				'[&::-moz-range-thumb]:border-0'
-			)}
-			aria-label="Volume"
-		/>
+		<!-- Custom volume slider with visual fill -->
+		<div class="relative flex-1">
+			<div class="relative h-1 w-full rounded-full bg-zinc-700">
+				<!-- Fill indicator -->
+				<div
+					class="absolute left-0 top-0 h-full rounded-full bg-white transition-all duration-75"
+					style="width: {volumePercent}%"
+				></div>
+			</div>
+			<input
+				type="range"
+				min="0"
+				max="100"
+				bind:value={volumeValue}
+				onmousedown={() => (volumeChanging = true)}
+				ontouchstart={() => (volumeChanging = true)}
+				oninput={handleVolumeChange}
+				onmouseup={handleVolumeCommit}
+				ontouchend={handleVolumeCommit}
+				class={cn(
+					'absolute inset-0 h-1 w-full cursor-pointer appearance-none bg-transparent',
+					'[&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4',
+					'[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full',
+					'[&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md',
+					'[&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4',
+					'[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white',
+					'[&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-md'
+				)}
+				aria-label="Volume"
+			/>
+		</div>
 
 		<span class="w-10 text-right text-sm text-zinc-400">
 			{volumeValue}%
 		</span>
 	</div>
 
-	<!-- Source Indicator -->
-	<div class="flex items-center gap-2 text-sm text-zinc-500">
-		<span class="capitalize">{$player.source}</span>
+	<!-- Source Indicator and Power Button -->
+	<div class="flex items-center justify-center gap-4 text-sm text-zinc-500">
+		<span class="capitalize">{$player.source === 'standby' ? 'Standby' : $player.source}</span>
+		<button
+			onclick={handlePowerToggle}
+			disabled={isPowerChanging}
+			class={cn(
+				'rounded-full p-2 transition-colors',
+				$player.poweredOn
+					? 'text-green-500 hover:bg-zinc-800 hover:text-green-400'
+					: 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
+				'disabled:cursor-not-allowed disabled:opacity-50'
+			)}
+			aria-label={$player.poweredOn ? 'Turn off speaker (standby)' : 'Turn on speaker'}
+			title={$player.poweredOn ? 'Turn off speaker (standby)' : 'Turn on speaker'}
+		>
+			<Power class={cn('h-5 w-5', isPowerChanging && 'animate-pulse')} />
+		</button>
 	</div>
 </div>

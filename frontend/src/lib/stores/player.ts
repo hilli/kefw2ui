@@ -13,6 +13,7 @@ export interface PlayerState {
 	volume: number;
 	muted: boolean;
 	source: string;
+	poweredOn: boolean;
 }
 
 const initialPlayerState: PlayerState = {
@@ -25,7 +26,8 @@ const initialPlayerState: PlayerState = {
 	position: 0,
 	volume: 50,
 	muted: false,
-	source: 'wifi'
+	source: 'wifi',
+	poweredOn: true
 };
 
 export const player = writable<PlayerState>(initialPlayerState);
@@ -67,4 +69,8 @@ export function updateSource(source: string) {
 
 export function updatePosition(position: number) {
 	player.update((p) => ({ ...p, position }));
+}
+
+export function updatePowerState(poweredOn: boolean) {
+	player.update((p) => ({ ...p, poweredOn }));
 }
