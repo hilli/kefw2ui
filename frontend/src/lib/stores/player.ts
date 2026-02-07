@@ -32,6 +32,7 @@ const initialPlayerState: PlayerState = {
 
 export const player = writable<PlayerState>(initialPlayerState);
 export const connectionStatus = writable<ConnectionStatus>('disconnected');
+export const speakerConnected = writable<boolean>(true);
 
 // Update functions for SSE events
 export function updateVolume(volume: number) {
@@ -73,4 +74,8 @@ export function updatePosition(position: number) {
 
 export function updatePowerState(poweredOn: boolean) {
 	player.update((p) => ({ ...p, poweredOn }));
+}
+
+export function updateSpeakerHealth(connected: boolean) {
+	speakerConnected.set(connected);
 }

@@ -7,21 +7,66 @@ interface APIError {
 }
 
 class APIClient {
-	private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
-		const response = await fetch(`${API_BASE}${path}`, {
-			headers: {
-				'Content-Type': 'application/json',
-				...options.headers
-			},
-			...options
-		});
+	private static readonly MAX_ATTEMPTS = 3;
+	private static readonly RETRY_DELAYS = [1000, 2000]; // ms between retries
+	private static readonly RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 
-		if (!response.ok) {
-			const error: APIError = await response.json().catch(() => ({ error: 'Unknown error' }));
-			throw new Error(error.error || `HTTP ${response.status}`);
+	private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+		let lastError: Error | undefined;
+
+		for (let attempt = 0; attempt < APIClient.MAX_ATTEMPTS; attempt++) {
+			try {
+				const response = await fetch(`${API_BASE}${path}`, {
+					headers: {
+						'Content-Type': 'application/json',
+						...options.headers
+					},
+					...options
+				});
+
+				if (!response.ok) {
+					// Retry on transient server errors (502/503/504)
+					if (APIClient.RETRYABLE_STATUS_CODES.has(response.status)) {
+						lastError = new Error(`HTTP ${response.status}`);
+						if (attempt < APIClient.MAX_ATTEMPTS - 1) {
+							console.warn(
+								`API ${options.method ?? 'GET'} ${path} returned ${response.status}, retrying (${attempt + 1}/${APIClient.MAX_ATTEMPTS - 1})...`
+							);
+							await this.delay(APIClient.RETRY_DELAYS[attempt]);
+							continue;
+						}
+					}
+
+					// 4xx and other errors — throw immediately, no retry
+					const error: APIError = await response.json().catch(() => ({ error: 'Unknown error' }));
+					throw new Error(error.error || `HTTP ${response.status}`);
+				}
+
+				return response.json();
+			} catch (err) {
+				// Network errors (TypeError from fetch) — retry
+				if (err instanceof TypeError) {
+					lastError = err;
+					if (attempt < APIClient.MAX_ATTEMPTS - 1) {
+						console.warn(
+							`API ${options.method ?? 'GET'} ${path} network error, retrying (${attempt + 1}/${APIClient.MAX_ATTEMPTS - 1})...`
+						);
+						await this.delay(APIClient.RETRY_DELAYS[attempt]);
+						continue;
+					}
+				}
+
+				// Non-network errors (including our own thrown errors above) — rethrow
+				throw err;
+			}
 		}
 
-		return response.json();
+		// All retries exhausted
+		throw lastError ?? new Error(`Request failed after ${APIClient.MAX_ATTEMPTS} attempts`);
+	}
+
+	private delay(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
 	}
 
 	// Speaker management

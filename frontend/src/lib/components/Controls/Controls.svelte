@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { player } from '$lib/stores/player';
+	import { player, connectionStatus } from '$lib/stores/player';
 	import { api } from '$lib/api/client';
 	import { cn } from '$lib/utils/cn';
+	import { toasts } from '$lib/stores/toast';
 	import {
 		Play,
 		Pause,
@@ -15,6 +16,9 @@
 		Repeat,
 		Repeat1
 	} from 'lucide-svelte';
+
+	// Derived: are controls disabled due to disconnection?
+	const isDisconnected = $derived($connectionStatus !== 'connected');
 
 	// Local state for volume control
 	let volumeChanging = $state(false);
@@ -52,7 +56,7 @@
 		try {
 			await api.playPause();
 		} catch (error) {
-			console.error('Play/pause failed:', error);
+			toasts.error('Play/pause failed');
 		}
 	}
 
@@ -60,7 +64,7 @@
 		try {
 			await api.previousTrack();
 		} catch (error) {
-			console.error('Previous track failed:', error);
+			toasts.error('Previous track failed');
 		}
 	}
 
@@ -68,7 +72,7 @@
 		try {
 			await api.nextTrack();
 		} catch (error) {
-			console.error('Next track failed:', error);
+			toasts.error('Next track failed');
 		}
 	}
 
@@ -82,7 +86,7 @@
 		try {
 			await api.setVolume(volumeValue);
 		} catch (error) {
-			console.error('Volume change failed:', error);
+			toasts.error('Volume change failed');
 		}
 	}
 
@@ -90,7 +94,7 @@
 		try {
 			await api.toggleMute();
 		} catch (error) {
-			console.error('Mute toggle failed:', error);
+			toasts.error('Mute toggle failed');
 		}
 	}
 
@@ -100,7 +104,7 @@
 		try {
 			await api.togglePower();
 		} catch (error) {
-			console.error('Power toggle failed:', error);
+			toasts.error('Power toggle failed');
 		} finally {
 			isPowerChanging = false;
 		}
@@ -114,7 +118,7 @@
 			shuffle = result.shuffle;
 			repeat = result.repeat;
 		} catch (error) {
-			console.error('Shuffle toggle failed:', error);
+			toasts.error('Shuffle toggle failed');
 		} finally {
 			modeLoading = false;
 		}
@@ -128,7 +132,7 @@
 			shuffle = result.shuffle;
 			repeat = result.repeat;
 		} catch (error) {
-			console.error('Repeat cycle failed:', error);
+			toasts.error('Repeat cycle failed');
 		} finally {
 			modeLoading = false;
 		}
@@ -138,13 +142,13 @@
 	const volumePercent = $derived(volumeValue);
 </script>
 
-<div class="flex flex-col items-center gap-6 p-6">
+<div class={cn('flex flex-col items-center gap-6 p-6', isDisconnected && 'opacity-50 pointer-events-none')}>
 	<!-- Playback Controls -->
 	<div class="flex items-center justify-center gap-4">
 		<!-- Shuffle Button -->
 		<button
 			onclick={handleShuffleToggle}
-			disabled={modeLoading}
+			disabled={isDisconnected || modeLoading}
 			class={cn(
 				'rounded-full p-2 transition-colors',
 				shuffle
@@ -161,10 +165,12 @@
 
 		<button
 			onclick={handlePrevious}
+			disabled={isDisconnected}
 			class={cn(
 				'rounded-full p-3 transition-colors',
 				'text-zinc-400 hover:bg-zinc-800 hover:text-white',
-				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900'
+				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
+				'disabled:cursor-not-allowed disabled:opacity-50'
 			)}
 			aria-label="Previous track"
 		>
@@ -173,10 +179,12 @@
 
 		<button
 			onclick={handlePlayPause}
+			disabled={isDisconnected}
 			class={cn(
 				'rounded-full p-4 transition-colors',
 				'bg-white text-black hover:bg-zinc-200',
-				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900'
+				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
+				'disabled:cursor-not-allowed disabled:opacity-50'
 			)}
 			aria-label={$player.state === 'playing' ? 'Pause' : 'Play'}
 		>
@@ -189,10 +197,12 @@
 
 		<button
 			onclick={handleNext}
+			disabled={isDisconnected}
 			class={cn(
 				'rounded-full p-3 transition-colors',
 				'text-zinc-400 hover:bg-zinc-800 hover:text-white',
-				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900'
+				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
+				'disabled:cursor-not-allowed disabled:opacity-50'
 			)}
 			aria-label="Next track"
 		>
@@ -202,7 +212,7 @@
 		<!-- Repeat Button -->
 		<button
 			onclick={handleRepeatCycle}
-			disabled={modeLoading}
+			disabled={isDisconnected || modeLoading}
 			class={cn(
 				'rounded-full p-2 transition-colors',
 				repeat !== 'off'
@@ -226,10 +236,12 @@
 	<div class="flex w-full max-w-md items-center gap-4">
 		<button
 			onclick={handleMuteToggle}
+			disabled={isDisconnected}
 			class={cn(
 				'rounded-full p-2 transition-colors',
 				'text-zinc-400 hover:bg-zinc-800 hover:text-white',
-				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900'
+				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
+				'disabled:cursor-not-allowed disabled:opacity-50'
 			)}
 			aria-label={$player.muted ? 'Unmute' : 'Mute'}
 		>
@@ -256,6 +268,7 @@
 				min="0"
 				max="100"
 				bind:value={volumeValue}
+				disabled={isDisconnected}
 				onmousedown={() => (volumeChanging = true)}
 				ontouchstart={() => (volumeChanging = true)}
 				oninput={handleVolumeChange}
@@ -284,7 +297,7 @@
 		<span class="capitalize">{$player.source === 'standby' ? 'Standby' : $player.source}</span>
 		<button
 			onclick={handlePowerToggle}
-			disabled={isPowerChanging}
+			disabled={isDisconnected || isPowerChanging}
 			class={cn(
 				'rounded-full p-2 transition-colors',
 				$player.poweredOn

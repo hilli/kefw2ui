@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { cn } from '$lib/utils/cn';
 	import { api } from '$lib/api/client';
+	import { toasts } from '$lib/stores/toast';
 	import { player, updateSource } from '$lib/stores/player';
 	import { speakers, activeSpeaker, setActiveSpeaker } from '$lib/stores/speakers';
 	import { browseNavigation } from '$lib/stores/browseNavigation';
@@ -111,7 +112,7 @@
 		try {
 			await cmd.action();
 		} catch (error) {
-			console.error(`Command failed: ${cmd.label}`, error);
+			toasts.error(`Command failed: ${cmd.label}`);
 		}
 		onClose();
 	}

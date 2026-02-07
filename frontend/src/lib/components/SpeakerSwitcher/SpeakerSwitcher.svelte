@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { speakers, activeSpeaker, setActiveSpeaker, defaultSpeakerIP, setDefaultSpeakerIP } from '$lib/stores/speakers';
 	import { api } from '$lib/api/client';
+	import { toasts } from '$lib/stores/toast';
 	import { cn } from '$lib/utils/cn';
 	import { Speaker, ChevronDown, RefreshCw, Check, Plus, Star } from 'lucide-svelte';
 	import { onMount } from 'svelte';
@@ -26,7 +27,7 @@
 				activeSpeaker.set(active);
 			}
 		} catch (error) {
-			console.error('Failed to load speakers:', error);
+			toasts.error('Failed to load speakers');
 		}
 	}
 
@@ -36,7 +37,7 @@
 			await api.discoverSpeakers();
 			await loadSpeakers();
 		} catch (error) {
-			console.error('Discovery failed:', error);
+			toasts.error('Discovery failed');
 		} finally {
 			isDiscovering = false;
 		}
@@ -53,7 +54,7 @@
 			setActiveSpeaker(speaker);
 			isOpen = false;
 		} catch (error) {
-			console.error('Failed to switch speaker:', error);
+			toasts.error('Failed to switch speaker');
 		}
 	}
 
@@ -63,7 +64,7 @@
 			await api.setDefaultSpeaker(speaker.ip);
 			setDefaultSpeakerIP(speaker.ip);
 		} catch (error) {
-			console.error('Failed to set default speaker:', error);
+			toasts.error('Failed to set default speaker');
 		}
 	}
 

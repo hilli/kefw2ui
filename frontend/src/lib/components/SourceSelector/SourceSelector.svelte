@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { player, updateSource } from '$lib/stores/player';
 	import { api } from '$lib/api/client';
+	import { toasts } from '$lib/stores/toast';
 	import { cn } from '$lib/utils/cn';
 	import {
 		Wifi,
@@ -44,7 +45,7 @@
 			updateSource(sourceId);
 			isOpen = false;
 		} catch (error) {
-			console.error('Failed to change source:', error);
+			toasts.error('Failed to change source');
 		} finally {
 			isChanging = false;
 		}

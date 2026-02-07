@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { player } from '$lib/stores/player';
 	import { queueRefresh } from '$lib/stores/queue';
+	import { toasts } from '$lib/stores/toast';
 	import { Music, Play, Loader2, X, Trash2, Shuffle, Repeat, Repeat1, GripVertical, Save, CheckSquare, Square, MinusSquare } from 'lucide-svelte';
 	import { browseNavigation } from '$lib/stores/browseNavigation';
 
@@ -79,7 +80,7 @@
 			await api.playQueueTrack(index);
 			currentIndex = index;
 		} catch (e) {
-			console.error('Failed to play track:', e);
+			toasts.error('Failed to play track');
 		} finally {
 			actionLoading = null;
 		}
@@ -93,7 +94,7 @@
 			// Reload queue to get updated state
 			await loadQueue();
 		} catch (e) {
-			console.error('Failed to remove track:', e);
+			toasts.error('Failed to remove track');
 		} finally {
 			actionLoading = null;
 		}
@@ -107,7 +108,7 @@
 			tracks = [];
 			currentIndex = -1;
 		} catch (e) {
-			console.error('Failed to clear queue:', e);
+			toasts.error('Failed to clear queue');
 		} finally {
 			actionLoading = null;
 		}
@@ -120,7 +121,7 @@
 			shuffle = result.shuffle;
 			repeat = result.repeat;
 		} catch (e) {
-			console.error('Failed to toggle shuffle:', e);
+			toasts.error('Failed to toggle shuffle');
 		} finally {
 			actionLoading = null;
 		}
@@ -133,7 +134,7 @@
 			shuffle = result.shuffle;
 			repeat = result.repeat;
 		} catch (e) {
-			console.error('Failed to cycle repeat:', e);
+			toasts.error('Failed to cycle repeat');
 		} finally {
 			actionLoading = null;
 		}
@@ -148,8 +149,7 @@
 			await api.saveQueueAsPlaylist(name);
 			// Could show a success toast here
 		} catch (e) {
-			console.error('Failed to save playlist:', e);
-			alert('Failed to save playlist: ' + (e instanceof Error ? e.message : 'Unknown error'));
+			toasts.error('Failed to save playlist');
 		} finally {
 			actionLoading = null;
 		}
@@ -205,7 +205,7 @@
 			selectMode = false;
 			await loadQueue();
 		} catch (e) {
-			console.error('Failed to remove tracks:', e);
+			toasts.error('Failed to remove selected tracks');
 		} finally {
 			actionLoading = null;
 		}
@@ -282,7 +282,7 @@
 			// Reload to ensure sync
 			await loadQueue();
 		} catch (e) {
-			console.error('Failed to move track:', e);
+			toasts.error('Failed to move track');
 			// Reload queue on error to restore correct state
 			await loadQueue();
 		} finally {

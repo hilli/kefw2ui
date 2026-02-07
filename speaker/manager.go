@@ -2,6 +2,7 @@ package speaker
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -17,7 +18,11 @@ type Manager struct {
 	eventCancel   context.CancelFunc
 
 	// Event callbacks
-	onEvent func(event kefw2.Event)
+	onEvent  func(event kefw2.Event)
+	onHealth func(connected bool)
+
+	// Speaker connectivity state
+	speakerConnected bool
 }
 
 // NewManager creates a new speaker manager
@@ -32,6 +37,33 @@ func (m *Manager) SetEventCallback(cb func(event kefw2.Event)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onEvent = cb
+}
+
+// SetHealthCallback sets the callback for speaker connectivity changes
+func (m *Manager) SetHealthCallback(cb func(connected bool)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onHealth = cb
+}
+
+// IsSpeakerConnected returns whether the active speaker is reachable
+func (m *Manager) IsSpeakerConnected() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.speakerConnected
+}
+
+// setSpeakerConnected updates connectivity state and fires the health callback
+func (m *Manager) setSpeakerConnected(connected bool) {
+	m.mu.Lock()
+	changed := m.speakerConnected != connected
+	m.speakerConnected = connected
+	cb := m.onHealth
+	m.mu.Unlock()
+
+	if changed && cb != nil {
+		cb(connected)
+	}
 }
 
 // Discover finds speakers on the network using mDNS
@@ -141,45 +173,115 @@ func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
 
 	m.eventClient = eventClient
 
-	// Start listening for events in background
+	// Start listening for events in background (with reconnection support)
 	eventCtx, cancel := context.WithCancel(context.Background())
 	m.eventCancel = cancel
 	go m.listenForEvents(eventCtx)
 
+	// Mark speaker as connected
+	m.speakerConnected = true
+	if m.onHealth != nil {
+		go m.onHealth(true)
+	}
+
 	return nil
 }
 
-// listenForEvents forwards speaker events to the callback
+// listenForEvents forwards speaker events to the callback, with automatic reconnection.
+// When the event client disconnects (speaker offline, network error, etc.), it will:
+// 1. Notify via setSpeakerConnected(false)
+// 2. Attempt to reconnect with exponential backoff (2s, 4s, 8s, 16s, max 30s)
+// 3. On successful reconnect, notify via setSpeakerConnected(true) and resume event forwarding
 func (m *Manager) listenForEvents(ctx context.Context) {
 	m.mu.RLock()
 	client := m.eventClient
+	speaker := m.activeSpeaker
 	m.mu.RUnlock()
 
-	if client == nil {
+	if client == nil || speaker == nil {
 		return
 	}
 
-	// Start the event client in a goroutine
-	go func() {
-		_ = client.Start(ctx)
-	}()
-
-	// Forward events
 	for {
+		// Start the event client (blocks in a goroutine, closes Events() channel when done)
+		startDone := make(chan error, 1)
+		go func() {
+			startDone <- client.Start(ctx)
+		}()
+
+		// Forward events until the channel closes
+		eventsCh := client.Events()
+	eventLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-eventsCh:
+				if !ok {
+					// Channel closed — event client died
+					break eventLoop
+				}
+				m.mu.RLock()
+				cb := m.onEvent
+				m.mu.RUnlock()
+
+				if cb != nil {
+					cb(event)
+				}
+			}
+		}
+
+		// Wait for Start() to finish (it should have returned already)
 		select {
 		case <-ctx.Done():
 			return
-		case event, ok := <-client.Events():
-			if !ok {
-				return
+		case err := <-startDone:
+			if err != nil {
+				log.Printf("Event client stopped: %v", err)
 			}
-			m.mu.RLock()
-			cb := m.onEvent
-			m.mu.RUnlock()
+		}
 
-			if cb != nil {
-				cb(event)
+		// Close the old client
+		client.Close()
+
+		// Mark speaker as disconnected
+		m.setSpeakerConnected(false)
+
+		// Reconnection loop with exponential backoff
+		backoff := 2 * time.Second
+		const maxBackoff = 30 * time.Second
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
 			}
+
+			log.Printf("Attempting to reconnect event client to %s...", speaker.IPAddress)
+
+			newClient, err := speaker.NewEventClient(
+				kefw2.WithSubscriptions(kefw2.DefaultEventSubscriptions),
+			)
+			if err != nil {
+				log.Printf("Reconnect failed: %v (retrying in %v)", err, backoff)
+				backoff = backoff * 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+
+			// Reconnect succeeded — update state and resume
+			log.Printf("Reconnected event client to %s", speaker.IPAddress)
+
+			m.mu.Lock()
+			m.eventClient = newClient
+			m.mu.Unlock()
+
+			client = newClient
+			m.setSpeakerConnected(true)
+			break // Break out of reconnection loop, continue outer loop to forward events
 		}
 	}
 }

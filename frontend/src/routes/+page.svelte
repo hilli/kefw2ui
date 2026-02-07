@@ -12,7 +12,8 @@
 	import Settings from '$lib/components/Settings/Settings.svelte';
 	import PWAInstallPrompt from '$lib/components/PWAInstallPrompt.svelte';
 	import { activeSpeaker } from '$lib/stores/speakers';
-	import { GripVertical, GripHorizontal } from 'lucide-svelte';
+	import { connectionStatus, speakerConnected } from '$lib/stores/player';
+	import { GripVertical, GripHorizontal, WifiOff, Loader2, Volume2 } from 'lucide-svelte';
 
 	// Track mobile/desktop for responsive layout
 	let isMobile = $state(false);
@@ -51,6 +52,27 @@
 			<Settings />
 		</div>
 	</header>
+
+	<!-- Disconnection Banner -->
+	{#if $connectionStatus === 'connecting'}
+		<div class="flex items-center justify-center gap-2 border-b border-yellow-500/30 bg-yellow-900/50 px-4 py-2 text-sm text-yellow-200">
+			<Loader2 class="h-4 w-4 animate-spin" />
+			<span>Reconnecting to server...</span>
+		</div>
+	{:else if $connectionStatus === 'disconnected'}
+		<div class="flex items-center justify-center gap-2 border-b border-red-500/30 bg-red-900/50 px-4 py-2 text-sm text-red-200">
+			<WifiOff class="h-4 w-4" />
+			<span>Connection lost — attempting to reconnect...</span>
+		</div>
+	{/if}
+
+	<!-- Speaker Unreachable Banner -->
+	{#if $connectionStatus === 'connected' && !$speakerConnected}
+		<div class="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-900/50 px-4 py-2 text-sm text-amber-200">
+			<Volume2 class="h-4 w-4" />
+			<span>Speaker unreachable — reconnecting...</span>
+		</div>
+	{/if}
 
 	<!-- Main Content -->
 	{#if isMobile}

@@ -4,13 +4,15 @@
 	import { browser } from '$app/environment';
 	import { connectSSE } from '$lib/api/sse';
 	import { api } from '$lib/api/client';
-	import { player } from '$lib/stores/player';
+	import { player, connectionStatus } from '$lib/stores/player';
 	import { speakers, setActiveSpeaker } from '$lib/stores/speakers';
 	import { get } from 'svelte/store';
 	import CommandPalette from '$lib/components/CommandPalette/CommandPalette.svelte';
+	import Toast from '$lib/components/Toast.svelte';
 	import { initMediaSession, updateMediaSessionMetadata, cleanupMediaSession } from '$lib/api/mediaSession';
 	import { RefreshCw } from 'lucide-svelte';
 	import { browseNavigation } from '$lib/stores/browseNavigation';
+	import { toasts } from '$lib/stores/toast';
 
 	interface Props {
 		children: Snippet;
@@ -101,7 +103,7 @@
 				await api.setActiveSpeaker(speaker.ip);
 				setActiveSpeaker(speaker);
 			} catch (error) {
-				console.error(`Failed to switch to speaker ${index + 1}:`, error);
+				toasts.error(`Failed to switch to speaker ${index + 1}`);
 			}
 		}
 	}
@@ -134,6 +136,24 @@
 			return;
 		}
 
+		// UI-only shortcuts (always available regardless of connection)
+		switch (event.key) {
+			case '?':
+				event.preventDefault();
+				showShortcuts = true;
+				return;
+
+			case '/':
+				event.preventDefault();
+				browseNavigation.focusSearch();
+				return;
+		}
+
+		// Gate all playback/speaker shortcuts behind connection status
+		if (get(connectionStatus) !== 'connected') {
+			return;
+		}
+
 		// Number keys 1-9 for quick speaker switching
 		if (event.key >= '1' && event.key <= '9') {
 			event.preventDefault();
@@ -147,7 +167,7 @@
 				try {
 					await api.playPause();
 				} catch (error) {
-					console.error('Play/pause failed:', error);
+					toasts.error('Play/pause failed');
 				}
 				break;
 
@@ -159,7 +179,7 @@
 					const newVolume = Math.min(100, currentPlayer.volume + step);
 					await api.setVolume(newVolume);
 				} catch (error) {
-					console.error('Volume up failed:', error);
+					toasts.error('Volume change failed');
 				}
 				break;
 
@@ -171,7 +191,7 @@
 					const newVolume = Math.max(0, currentPlayer.volume - step);
 					await api.setVolume(newVolume);
 				} catch (error) {
-					console.error('Volume down failed:', error);
+					toasts.error('Volume change failed');
 				}
 				break;
 
@@ -180,7 +200,7 @@
 				try {
 					await api.previousTrack();
 				} catch (error) {
-					console.error('Previous track failed:', error);
+					toasts.error('Previous track failed');
 				}
 				break;
 
@@ -189,7 +209,7 @@
 				try {
 					await api.nextTrack();
 				} catch (error) {
-					console.error('Next track failed:', error);
+					toasts.error('Next track failed');
 				}
 				break;
 
@@ -198,18 +218,8 @@
 				try {
 					await api.toggleMute();
 				} catch (error) {
-					console.error('Mute toggle failed:', error);
+					toasts.error('Mute toggle failed');
 				}
-				break;
-
-			case '?':
-				event.preventDefault();
-				showShortcuts = true;
-				break;
-
-			case '/':
-				event.preventDefault();
-				browseNavigation.focusSearch();
 				break;
 		}
 	}
@@ -232,6 +242,9 @@
 		</div>
 	</div>
 {/if}
+
+<Toast />
+
 
 <div class="min-h-screen bg-zinc-900 text-white">
 	{@render children()}

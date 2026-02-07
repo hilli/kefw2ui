@@ -203,6 +203,23 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/", s.handleFrontend)
 }
 
+// HandleSpeakerHealth is called by the speaker manager when speaker connectivity changes.
+// It broadcasts a speakerHealth SSE event to all connected clients.
+func (s *Server) HandleSpeakerHealth(connected bool) {
+	payload, err := json.Marshal(map[string]any{
+		"type": "speakerHealth",
+		"data": map[string]any{
+			"connected": connected,
+		},
+	})
+	if err != nil {
+		log.Printf("Error marshaling speakerHealth event: %v", err)
+		return
+	}
+
+	s.broadcastSSE(payload)
+}
+
 // HandleSpeakerEvent is called by the speaker manager when events occur
 func (s *Server) HandleSpeakerEvent(event kefw2.Event) {
 	if event == nil {
@@ -387,7 +404,10 @@ func (s *Server) broadcastCurrentState() {
 // handleHealth is a simple health check endpoint
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":           "ok",
+		"speakerConnected": s.manager.IsSpeakerConnected(),
+	})
 }
 
 // handleSpeakers returns the list of known speakers
@@ -2828,6 +2848,16 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sendInitialState(w http.ResponseWriter, flusher http.Flusher) {
 	// Send connected event
 	fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"connected\"}\n\n")
+	flusher.Flush()
+
+	// Send speaker health status
+	speakerHealthData, _ := json.Marshal(map[string]any{
+		"type": "speakerHealth",
+		"data": map[string]any{
+			"connected": s.manager.IsSpeakerConnected(),
+		},
+	})
+	fmt.Fprintf(w, "data: %s\n\n", speakerHealthData)
 	flusher.Flush()
 
 	spk := s.manager.GetActiveSpeaker()

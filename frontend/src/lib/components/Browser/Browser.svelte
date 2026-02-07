@@ -3,6 +3,7 @@
 	import { api, type BrowseItem } from '$lib/api/client';
 	import { queueRefresh } from '$lib/stores/queue';
 	import { browseNavigation } from '$lib/stores/browseNavigation';
+	import { toasts } from '$lib/stores/toast';
 	import {
 		Radio,
 		Podcast,
@@ -189,7 +190,7 @@
 				containerPath: item.containerPath // For podcast episodes
 			});
 		} catch (e) {
-			console.error('Failed to play:', e);
+			toasts.error('Failed to play');
 		} finally {
 			setTimeout(() => {
 				playingPath = null;
@@ -213,7 +214,7 @@
 			// Trigger queue refresh in the Queue component
 			queueRefresh.refresh();
 		} catch (e) {
-			console.error('Failed to add to queue:', e);
+			toasts.error('Failed to add to queue');
 		} finally {
 			setTimeout(() => {
 				queueingPath = null;
@@ -232,7 +233,7 @@
 				add: true
 			});
 		} catch (e) {
-			console.error('Failed to add to favorites:', e);
+			toasts.error('Failed to add to favorites');
 		} finally {
 			setTimeout(() => {
 				favoritingPath = null;

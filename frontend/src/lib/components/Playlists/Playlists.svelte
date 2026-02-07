@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { toasts } from '$lib/stores/toast';
 	import {
 		ListMusic,
 		Play,
@@ -78,7 +79,7 @@
 			const response = await api.getPlaylist(id);
 			selectedPlaylist = response.playlist;
 		} catch (e) {
-			console.error('Failed to load playlist:', e);
+			toasts.error('Failed to load playlist');
 		} finally {
 			actionLoading = null;
 		}
@@ -90,7 +91,7 @@
 			await api.loadPlaylist(id, append);
 			// Could show success message
 		} catch (e) {
-			console.error('Failed to load playlist:', e);
+			toasts.error('Failed to load playlist');
 		} finally {
 			actionLoading = null;
 		}
@@ -108,7 +109,7 @@
 			}
 			await loadPlaylists();
 		} catch (e) {
-			console.error('Failed to delete playlist:', e);
+			toasts.error('Failed to delete playlist');
 		} finally {
 			actionLoading = null;
 		}
@@ -125,8 +126,7 @@
 			newPlaylistDescription = '';
 			await loadPlaylists();
 		} catch (e) {
-			console.error('Failed to save playlist:', e);
-			alert(e instanceof Error ? e.message : 'Failed to save playlist');
+			toasts.error('Failed to save playlist');
 		} finally {
 			actionLoading = null;
 		}

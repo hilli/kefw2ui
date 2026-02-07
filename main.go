@@ -56,6 +56,9 @@ func main() {
 	// Wire up speaker events to SSE broadcast
 	speakerMgr.SetEventCallback(srv.HandleSpeakerEvent)
 
+	// Wire up speaker health changes to SSE broadcast
+	speakerMgr.SetHealthCallback(srv.HandleSpeakerHealth)
+
 	// Initial speaker discovery and connection
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -1,14 +1,18 @@
 <script lang="ts">
-	import { player } from '$lib/stores/player';
+	import { player, connectionStatus } from '$lib/stores/player';
 	import { browseNavigation } from '$lib/stores/browseNavigation';
 	import { api } from '$lib/api/client';
 	import { cn } from '$lib/utils/cn';
 	import { Music } from 'lucide-svelte';
+	import { toasts } from '$lib/stores/toast';
 
 	// State for seeking
 	let isSeeking = $state(false);
 	let seekPosition = $state(0);
 	let progressBarRef = $state<HTMLDivElement | null>(null);
+
+	// Derived: are controls disabled due to disconnection?
+	const isDisconnected = $derived($connectionStatus !== 'connected');
 
 	// Format milliseconds to mm:ss
 	function formatTime(ms: number): string {
@@ -41,19 +45,19 @@
 
 	// Handle click on progress bar
 	async function handleProgressClick(event: MouseEvent) {
-		if ($player.duration <= 0) return;
+		if (isDisconnected || $player.duration <= 0) return;
 
 		const positionMs = getPositionFromEvent(event);
 		try {
 			await api.seek(positionMs);
 		} catch (e) {
-			console.error('Seek failed:', e);
+			toasts.error('Seek failed');
 		}
 	}
 
 	// Handle drag start
 	function handleDragStart(event: MouseEvent | TouchEvent) {
-		if ($player.duration <= 0) return;
+		if (isDisconnected || $player.duration <= 0) return;
 
 		event.preventDefault();
 		isSeeking = true;
@@ -89,7 +93,7 @@
 		try {
 			await api.seek(seekPosition);
 		} catch (e) {
-			console.error('Seek failed:', e);
+			toasts.error('Seek failed');
 		}
 
 		isSeeking = false;
@@ -171,14 +175,17 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			bind:this={progressBarRef}
-			class="relative h-1.5 w-full cursor-pointer overflow-hidden rounded-full bg-zinc-700 transition-all group-hover:h-2"
+			class={cn(
+				'relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-700 transition-all group-hover:h-2',
+				isDisconnected ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+			)}
 			class:h-2={isSeeking}
 			role="slider"
 			aria-valuenow={displayPosition}
 			aria-valuemin={0}
 			aria-valuemax={$player.duration}
 			aria-label="Seek position"
-			tabindex={$player.duration > 0 ? 0 : -1}
+			tabindex={!isDisconnected && $player.duration > 0 ? 0 : -1}
 			onclick={handleProgressClick}
 			onmousedown={handleDragStart}
 			ontouchstart={handleDragStart}
