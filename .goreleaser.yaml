@@ -55,6 +55,11 @@ brews:
     url_template: "https://github.com/hilli/kefw2ui/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     skip_upload: false
     directory: Formula
+    service: |
+      run [opt_bin/"kefw2ui", "--bind", "0.0.0.0", "--port", "8080"]
+      keep_alive true
+      log_path var/"log/kefw2ui.log"
+      error_log_path var/"log/kefw2ui.log"
     repository:
       owner: hilli
       name: homebrew-tap
