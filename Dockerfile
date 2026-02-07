@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN bun run build
 
 # Stage 2: Build Go binary
-FROM golang:1.22-alpine AS backend
+FROM golang:1.25-alpine AS backend
 WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod go.sum ./
@@ -17,7 +17,7 @@ COPY --from=frontend /app/frontend/build ./frontend/build
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o kefw2ui .
 
 # Stage 3: Runtime
-FROM alpine:3.20
+FROM alpine:latest
 RUN apk add --no-cache ca-certificates tzdata
 RUN adduser -D -u 1000 kefw2ui
 USER kefw2ui

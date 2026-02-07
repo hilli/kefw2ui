@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,25 +15,57 @@ import (
 	"github.com/hilli/kefw2ui/config"
 	"github.com/hilli/kefw2ui/server"
 	"github.com/hilli/kefw2ui/speaker"
+	"tailscale.com/tsnet"
 )
 
 //go:embed all:frontend/build
 var frontendFS embed.FS
 
+// Set via ldflags at build time
+var (
+	version = "dev"
+	commit  = "none"
+)
+
+// envOrDefault returns the environment variable value if set, otherwise the default.
+func envOrDefault(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return fallback
+}
+
+// envBool returns true if the environment variable is set to a truthy value.
+func envBool(key string) bool {
+	v := os.Getenv(key)
+	return v == "1" || v == "true" || v == "yes"
+}
+
 func main() {
 	var (
-		bind    string
-		port    int
-		version bool
+		bind        string
+		port        int
+		showVersion bool
+		tsEnabled   bool
+		tsHostname  string
+		tsAuthKey   string
+		tsStateDir  string
 	)
 
-	flag.StringVar(&bind, "bind", "0.0.0.0", "Address to bind to")
+	flag.StringVar(&bind, "bind", envOrDefault("KEFW2UI_BIND", "0.0.0.0"), "Address to bind to")
 	flag.IntVar(&port, "port", 8080, "Port to listen on")
-	flag.BoolVar(&version, "version", false, "Print version and exit")
+	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
+
+	// Tailscale flags (env vars provide defaults)
+	flag.BoolVar(&tsEnabled, "tailscale", envBool("TS_ENABLED"), "Enable Tailscale listener")
+	flag.StringVar(&tsHostname, "tailscale-hostname", envOrDefault("TS_HOSTNAME", "kefw2ui"), "Hostname on the tailnet")
+	flag.StringVar(&tsAuthKey, "tailscale-authkey", envOrDefault("TS_AUTHKEY", ""), "Tailscale auth key for headless login")
+	flag.StringVar(&tsStateDir, "tailscale-dir", envOrDefault("TS_STATE_DIR", ""), "Directory for Tailscale state persistence")
+
 	flag.Parse()
 
-	if version {
-		fmt.Println("kefw2ui v0.1.0")
+	if showVersion {
+		fmt.Printf("kefw2ui %s (%s)\n", version, commit)
 		os.Exit(0)
 	}
 
@@ -99,6 +132,36 @@ func main() {
 		}
 	}()
 
+	// Tailscale listener (optional)
+	var tsServer *tsnet.Server
+	if tsEnabled {
+		tsServer = &tsnet.Server{
+			Hostname: tsHostname,
+		}
+		if tsAuthKey != "" {
+			tsServer.AuthKey = tsAuthKey
+		}
+		if tsStateDir != "" {
+			tsServer.Dir = tsStateDir
+		}
+
+		if err := tsServer.Start(); err != nil {
+			log.Fatalf("Tailscale error: %v", err)
+		}
+
+		ln, err := tsServer.ListenTLS("tcp", ":443")
+		if err != nil {
+			log.Fatalf("Tailscale ListenTLS error: %v", err)
+		}
+
+		go func() {
+			log.Printf("Tailscale HTTPS listener active on %s:443", tsHostname)
+			if err := http.Serve(ln, srv.Handler()); err != nil {
+				log.Fatalf("Tailscale serve error: %v", err)
+			}
+		}()
+	}
+
 	// Graceful shutdown
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -106,11 +169,14 @@ func main() {
 		<-sigCh
 		log.Println("Shutting down...")
 		speakerMgr.Close()
+		if tsServer != nil {
+			tsServer.Close()
+		}
 		os.Exit(0)
 	}()
 
 	addr := fmt.Sprintf("%s:%d", bind, port)
-	log.Printf("Starting kefw2ui on http://%s", addr)
+	log.Printf("Starting kefw2ui %s on http://%s", version, addr)
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server error: %v", err)

@@ -1,0 +1,18 @@
+# Dockerfile.goreleaser - slim runtime image for CI/release builds.
+# Used with `docker buildx build --platform linux/amd64,linux/arm64`.
+# Goreleaser pre-builds the binaries; the CI workflow copies them into
+# a platform-keyed layout before this Dockerfile runs:
+#   dist/linux_amd64/kefw2ui
+#   dist/linux_arm64/kefw2ui
+FROM alpine:latest
+RUN apk add --no-cache ca-certificates tzdata
+RUN adduser -D -u 1000 kefw2ui
+
+ARG TARGETARCH
+COPY dist/linux_${TARGETARCH}/kefw2ui /usr/local/bin/kefw2ui
+
+USER kefw2ui
+WORKDIR /home/kefw2ui
+EXPOSE 8080
+ENTRYPOINT ["kefw2ui"]
+CMD ["--bind", "0.0.0.0", "--port", "8080"]

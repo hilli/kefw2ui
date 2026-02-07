@@ -37,7 +37,7 @@ tasks:
     desc: Build production binary with embedded frontend
     deps: [frontend:build]
     cmds:
-      - CGO_ENABLED=0 go build -o {{.BINARY_NAME}} .
+      - CGO_ENABLED=0 go build -o bin/{{.BINARY_NAME}} .
 
   frontend:install:
     desc: Install frontend dependencies
@@ -125,11 +125,11 @@ tasks:
     desc: Run the built binary
     deps: [build]
     cmds:
-      - ./{{.BINARY_NAME}}
+      - ./bin/{{.BINARY_NAME}}
 
   install:
     desc: Install binary to /usr/local/bin
     deps: [build]
     cmds:
-      - sudo cp {{.BINARY_NAME}} /usr/local/bin/
+      - sudo cp bin/{{.BINARY_NAME}} /usr/local/bin/
       - echo "Installed to /usr/local/bin/{{.BINARY_NAME}}"

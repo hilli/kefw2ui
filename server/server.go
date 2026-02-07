@@ -142,6 +142,12 @@ func (s *Server) getCachedAirableClient(spk *kefw2.KEFSpeaker) *kefw2.AirableCli
 	return client
 }
 
+// Handler returns the server's HTTP handler (with logging middleware).
+// This is useful for serving the same handler on additional listeners (e.g. Tailscale).
+func (s *Server) Handler() http.Handler {
+	return s.httpServer.Handler
+}
+
 // ListenAndServe starts the HTTP server
 func (s *Server) ListenAndServe() error {
 	return s.httpServer.ListenAndServe()

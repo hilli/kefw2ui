@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    # Frontend must be pre-built by CI before goreleaser runs.
+    # This hook verifies the build artifacts exist.
+    - test -d frontend/build
+
+builds:
+  - id: kefw2ui
+    main: .
+    binary: kefw2ui
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+      - kefw2ui.service
+
+brews:
+  - name: kefw2ui
+    commit_author:
+      name: Jens Hilligsoe
+      email: github@hilli.dk
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    homepage: "https://github.com/hilli/kefw2ui"
+    description: "Web UI for controlling KEF W2 speakers (LSX II, LS50 Wireless II, LS60)"
+    license: "MIT"
+    url_template: "https://github.com/hilli/kefw2ui/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    skip_upload: false
+    directory: Formula
+    repository:
+      owner: hilli
+      name: homebrew-tap
+      branch: release-kefw2ui-{{.Tag}}
+      pull_request:
+        enabled: true
+        draft: false
+
+changelog:
+  disable: true
