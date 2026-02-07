@@ -6,6 +6,7 @@
 	import {
 		Play,
 		Pause,
+		Square,
 		SkipBack,
 		SkipForward,
 		Volume2,
@@ -19,6 +20,11 @@
 
 	// Derived: are controls disabled due to disconnection?
 	const isDisconnected = $derived($connectionStatus !== 'connected');
+
+	// Derived: is the current content a live stream or radio (where pause is not meaningful)?
+	const isLiveStream = $derived(
+		$player.audioType === 'audioBroadcast' || $player.live
+	);
 
 	// Local state for volume control
 	let volumeChanging = $state(false);
@@ -57,6 +63,14 @@
 			await api.playPause();
 		} catch (error) {
 			toasts.error('Play/pause failed');
+		}
+	}
+
+	async function handleStop() {
+		try {
+			await api.stop();
+		} catch (error) {
+			toasts.error('Stop failed');
 		}
 	}
 
@@ -178,7 +192,7 @@
 		</button>
 
 		<button
-			onclick={handlePlayPause}
+			onclick={$player.state === 'playing' && isLiveStream ? handleStop : handlePlayPause}
 			disabled={isDisconnected}
 			class={cn(
 				'rounded-full p-4 transition-colors',
@@ -186,10 +200,14 @@
 				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
 				'disabled:cursor-not-allowed disabled:opacity-50'
 			)}
-			aria-label={$player.state === 'playing' ? 'Pause' : 'Play'}
+			aria-label={$player.state === 'playing' ? (isLiveStream ? 'Stop' : 'Pause') : 'Play'}
 		>
 			{#if $player.state === 'playing'}
-				<Pause class="h-8 w-8" />
+				{#if isLiveStream}
+					<Square class="h-8 w-8" />
+				{:else}
+					<Pause class="h-8 w-8" />
+				{/if}
 			{:else}
 				<Play class="ml-1 h-8 w-8" />
 			{/if}

@@ -219,7 +219,9 @@ export async function refreshFullState() {
 				icon: playerData.icon,
 				state: playerData.state,
 				duration: playerData.duration,
-				position: playerData.position
+				position: playerData.position,
+				audioType: playerData.audioType,
+				live: playerData.live
 			});
 		}
 
@@ -258,6 +260,8 @@ function handleEvent(message: { type: string; data: unknown }) {
 					state?: string;
 					duration?: number;
 					position?: number;
+					audioType?: string;
+					live?: boolean;
 				}
 			);
 			break;

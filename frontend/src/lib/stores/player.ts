@@ -14,6 +14,8 @@ export interface PlayerState {
 	muted: boolean;
 	source: string;
 	poweredOn: boolean;
+	audioType: string;
+	live: boolean;
 }
 
 const initialPlayerState: PlayerState = {
@@ -27,7 +29,9 @@ const initialPlayerState: PlayerState = {
 	volume: 50,
 	muted: false,
 	source: 'wifi',
-	poweredOn: true
+	poweredOn: true,
+	audioType: '',
+	live: false
 };
 
 export const player = writable<PlayerState>(initialPlayerState);
@@ -51,6 +55,8 @@ export function updatePlayerData(data: {
 	state?: string;
 	duration?: number;
 	position?: number;
+	audioType?: string;
+	live?: boolean;
 }) {
 	player.update((p) => ({
 		...p,
@@ -60,7 +66,9 @@ export function updatePlayerData(data: {
 		artwork: data.icon ?? p.artwork,
 		state: (data.state as PlayerState['state']) ?? p.state,
 		duration: data.duration ?? p.duration,
-		position: data.position ?? p.position
+		position: data.position ?? p.position,
+		audioType: data.audioType ?? p.audioType,
+		live: data.live ?? p.live
 	}));
 }
 

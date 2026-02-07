@@ -163,6 +163,7 @@ func (s *Server) registerRoutes() {
 	// Player controls
 	s.mux.HandleFunc("/api/player", s.handlePlayer)
 	s.mux.HandleFunc("/api/player/play", s.handlePlayerPlay)
+	s.mux.HandleFunc("/api/player/stop", s.handlePlayerStop)
 	s.mux.HandleFunc("/api/player/next", s.handlePlayerNext)
 	s.mux.HandleFunc("/api/player/prev", s.handlePlayerPrev)
 	s.mux.HandleFunc("/api/player/volume", s.handlePlayerVolume)
@@ -387,13 +388,15 @@ func (s *Server) broadcastCurrentState() {
 		if playerEventData, err := json.Marshal(map[string]any{
 			"type": "player",
 			"data": map[string]any{
-				"state":    playerData.State,
-				"title":    playerData.TrackRoles.Title,
-				"artist":   playerData.TrackRoles.MediaData.MetaData.Artist,
-				"album":    playerData.TrackRoles.MediaData.MetaData.Album,
-				"icon":     playerData.TrackRoles.Icon,
-				"duration": playerData.Status.Duration,
-				"position": position,
+				"state":     playerData.State,
+				"title":     playerData.TrackRoles.Title,
+				"artist":    playerData.TrackRoles.MediaData.MetaData.Artist,
+				"album":     playerData.TrackRoles.MediaData.MetaData.Album,
+				"icon":      playerData.TrackRoles.Icon,
+				"duration":  playerData.Status.Duration,
+				"position":  position,
+				"audioType": playerData.MediaRoles.AudioType,
+				"live":      playerData.MediaRoles.MediaData.MetaData.Live,
 			},
 		}); err == nil {
 			s.broadcastSSE(playerEventData)
@@ -753,16 +756,18 @@ func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"state":    playerData.State,
-		"volume":   volume,
-		"muted":    muted,
-		"source":   string(source),
-		"title":    playerData.TrackRoles.Title,
-		"artist":   playerData.TrackRoles.MediaData.MetaData.Artist,
-		"album":    playerData.TrackRoles.MediaData.MetaData.Album,
-		"icon":     playerData.TrackRoles.Icon,
-		"duration": playerData.Status.Duration,
-		"position": position,
+		"state":     playerData.State,
+		"volume":    volume,
+		"muted":     muted,
+		"source":    string(source),
+		"title":     playerData.TrackRoles.Title,
+		"artist":    playerData.TrackRoles.MediaData.MetaData.Artist,
+		"album":     playerData.TrackRoles.MediaData.MetaData.Album,
+		"icon":      playerData.TrackRoles.Icon,
+		"duration":  playerData.Status.Duration,
+		"position":  position,
+		"audioType": playerData.MediaRoles.AudioType,
+		"live":      playerData.MediaRoles.MediaData.MetaData.Live,
 	})
 }
 
@@ -781,6 +786,28 @@ func (s *Server) handlePlayerPlay(w http.ResponseWriter, r *http.Request) {
 
 	if err := spk.PlayPause(r.Context()); err != nil {
 		s.jsonError(w, "Play/pause failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handlePlayerStop stops playback (for radio/streaming where pause doesn't apply)
+func (s *Server) handlePlayerStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	spk := s.manager.GetActiveSpeaker()
+	if spk == nil {
+		s.jsonError(w, "No active speaker", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := spk.Stop(r.Context()); err != nil {
+		s.jsonError(w, "Stop failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -2925,13 +2952,15 @@ func (s *Server) sendInitialState(w http.ResponseWriter, flusher http.Flusher) {
 		playerEventData, _ := json.Marshal(map[string]any{
 			"type": "player",
 			"data": map[string]any{
-				"state":    playerData.State,
-				"title":    playerData.TrackRoles.Title,
-				"artist":   playerData.TrackRoles.MediaData.MetaData.Artist,
-				"album":    playerData.TrackRoles.MediaData.MetaData.Album,
-				"icon":     playerData.TrackRoles.Icon,
-				"duration": playerData.Status.Duration,
-				"position": position,
+				"state":     playerData.State,
+				"title":     playerData.TrackRoles.Title,
+				"artist":    playerData.TrackRoles.MediaData.MetaData.Artist,
+				"album":     playerData.TrackRoles.MediaData.MetaData.Album,
+				"icon":      playerData.TrackRoles.Icon,
+				"duration":  playerData.Status.Duration,
+				"position":  position,
+				"audioType": playerData.MediaRoles.AudioType,
+				"live":      playerData.MediaRoles.MediaData.MetaData.Live,
 			},
 		})
 		fmt.Fprintf(w, "data: %s\n\n", playerEventData)

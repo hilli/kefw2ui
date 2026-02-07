@@ -168,12 +168,18 @@ class APIClient {
 		icon: string;
 		duration: number;
 		position: number;
+		audioType: string;
+		live: boolean;
 	}> {
 		return this.request('/player');
 	}
 
 	async playPause(): Promise<{ status: string }> {
 		return this.request('/player/play', { method: 'POST' });
+	}
+
+	async stop(): Promise<{ status: string }> {
+		return this.request('/player/stop', { method: 'POST' });
 	}
 
 	async nextTrack(): Promise<{ status: string }> {

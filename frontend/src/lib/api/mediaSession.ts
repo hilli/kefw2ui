@@ -1,5 +1,4 @@
-import { get } from 'svelte/store';
-import { player, type PlayerState } from '$lib/stores/player';
+import { type PlayerState } from '$lib/stores/player';
 import { api } from '$lib/api/client';
 
 /**
@@ -54,14 +53,9 @@ export function initMediaSession() {
 			}
 		});
 
-		// Stop is not commonly used but good to have
 		navigator.mediaSession.setActionHandler('stop', async () => {
 			try {
-				// We don't have a stop API, so pause instead
-				const currentPlayer = get(player);
-				if (currentPlayer.state === 'playing') {
-					await api.playPause();
-				}
+				await api.stop();
 			} catch (error) {
 				console.error('Media Session stop failed:', error);
 			}
