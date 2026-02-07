@@ -43,23 +43,24 @@ archives:
       - LICENSE
       - kefw2ui.service
 
-brews:
+homebrew_casks:
   - name: kefw2ui
     commit_author:
       name: Jens Hilligsoe
       email: github@hilli.dk
-    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
     homepage: "https://github.com/hilli/kefw2ui"
-    description: "Web UI for controlling KEF W2 speakers (LSX II, LS50 Wireless II, LS60)"
-    license: "MIT"
-    url_template: "https://github.com/hilli/kefw2ui/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    description: "Web UI for controlling KEF W2 speakers"
+    url:
+      template: "https://github.com/hilli/kefw2ui/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+      verified: "github.com/hilli/kefw2ui/"
     skip_upload: false
-    directory: Formula
-    service: |
-      run [opt_bin/"kefw2ui", "--bind", "0.0.0.0", "--port", "8080"]
-      keep_alive true
-      log_path var/"log/kefw2ui.log"
-      error_log_path var/"log/kefw2ui.log"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/kefw2ui"]
+          end
     repository:
       owner: hilli
       name: homebrew-tap
