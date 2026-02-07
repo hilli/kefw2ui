@@ -161,9 +161,9 @@ The local listener on port 8080 runs in parallel, so you get both local and remo
 
 ### Requirements
 
-- Go 1.22+
+- Go 1.25+
 - Bun 1.0+ or Node.js 22+
-- Task (go-task.github.io)
+- [Task](https://taskfile.dev)
 
 ### Running locally
 
