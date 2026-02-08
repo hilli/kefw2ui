@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api/client';
+	import { api, type MediaData } from '$lib/api/client';
 	import { toasts } from '$lib/stores/toast';
+	import { queueRefresh } from '$lib/stores/queue';
 	import {
 		ListMusic,
 		Play,
@@ -11,7 +12,11 @@
 		ChevronLeft,
 		Music,
 		GripVertical,
-		ListPlus
+		ListPlus,
+		CheckSquare,
+		Square,
+		MinusSquare,
+		X
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -38,6 +43,36 @@
 		path?: string;
 		id?: string;
 		type?: string;
+		uri?: string;
+		mimeType?: string;
+		serviceId?: string;
+	}
+
+	// Custom MIME type for cross-panel drag-and-drop
+	const DRAG_MIME = 'application/x-kefw2-browse-item';
+
+	function serviceIdToSource(serviceId?: string): string {
+		if (!serviceId || serviceId === 'UPnP') return 'upnp';
+		if (serviceId === 'airableRadios') return 'radio';
+		return 'podcasts';
+	}
+
+	function trackToMediaData(track: Track): MediaData | undefined {
+		if (!track.uri) return undefined;
+		return {
+			metaData: {
+				artist: track.artist,
+				album: track.album,
+				serviceID: track.serviceId
+			},
+			resources: [
+				{
+					uri: track.uri,
+					mimeType: track.mimeType || '',
+					duration: track.duration
+				}
+			]
+		};
 	}
 
 	interface PlaylistDetail {
@@ -59,6 +94,17 @@
 	// Drag and drop state for playlist detail view
 	let draggedIndex = $state<number | null>(null);
 	let dropTargetIndex = $state<number | null>(null);
+
+	// External drag-and-drop state (drops from Browser/Queue)
+	let externalDragOver = $state(false);
+
+	// Track selection state (for multi-select removal)
+	let selectedIndices = $state<Set<number>>(new Set());
+	let selectMode = $state(false);
+	let allSelected = $derived(
+		selectedPlaylist !== null && selectedPlaylist.tracks.length > 0 && selectedIndices.size === selectedPlaylist.tracks.length
+	);
+	let someSelected = $derived(selectedIndices.size > 0 && !allSelected);
 
 	async function loadPlaylists() {
 		try {
@@ -91,6 +137,7 @@
 			actionLoading = append ? `append-${id}` : `load-${id}`;
 			const result = await api.loadPlaylist(id, append);
 			const count = result.trackCount ?? 0;
+			queueRefresh.refresh();
 			if (append) {
 				toasts.success(`Appended ${count} track${count !== 1 ? 's' : ''} to queue`);
 			} else {
@@ -123,10 +170,25 @@
 
 	// Drag and drop handlers for playlist track reordering
 	function handleDragStart(event: DragEvent, index: number) {
-		if (!event.dataTransfer) return;
+		if (!event.dataTransfer || !selectedPlaylist) return;
 		draggedIndex = index;
-		event.dataTransfer.effectAllowed = 'move';
+		event.dataTransfer.effectAllowed = 'copyMove';
 		event.dataTransfer.setData('text/plain', index.toString());
+
+		// Also set the cross-panel MIME type so this track can be dropped on Queue
+		const track = selectedPlaylist.tracks[index];
+		const source = serviceIdToSource(track.serviceId);
+		const dragData = JSON.stringify({
+			path: track.path || '',
+			source,
+			type: track.type || 'audio',
+			title: track.title,
+			icon: track.icon,
+			artist: track.artist,
+			album: track.album,
+			mediaData: trackToMediaData(track)
+		});
+		event.dataTransfer.setData(DRAG_MIME, dragData);
 
 		requestAnimationFrame(() => {
 			const target = event.target as HTMLElement;
@@ -139,31 +201,61 @@
 		target.classList.remove('opacity-50');
 		draggedIndex = null;
 		dropTargetIndex = null;
+		externalDragOver = false;
 	}
 
 	function handleDragOver(event: DragEvent, index: number) {
 		event.preventDefault();
 		if (!event.dataTransfer) return;
-		event.dataTransfer.dropEffect = 'move';
 
+		// Check if this is an external drop (from Browser or Queue)
+		if (event.dataTransfer.types.includes(DRAG_MIME) && draggedIndex === null) {
+			event.dataTransfer.dropEffect = 'copy';
+			externalDragOver = true;
+			dropTargetIndex = index;
+			return;
+		}
+
+		// Internal reorder
+		event.dataTransfer.dropEffect = 'move';
 		if (draggedIndex !== null && draggedIndex !== index) {
 			dropTargetIndex = index;
 		}
 	}
 
-	function handleDragLeave() {
+	function handleDragLeave(event: DragEvent) {
+		const relatedTarget = event.relatedTarget as HTMLElement | null;
+		const currentTarget = event.currentTarget as HTMLElement;
+		if (relatedTarget && currentTarget.contains(relatedTarget)) return;
 		dropTargetIndex = null;
 	}
 
 	async function handleDrop(event: DragEvent, toIndex: number) {
 		event.preventDefault();
 		dropTargetIndex = null;
+		externalDragOver = false;
 
+		// Check for external drop first (from Browser or Queue)
+		const mimeData = event.dataTransfer?.getData(DRAG_MIME);
+		if (mimeData && draggedIndex === null) {
+			// Stop propagation so panel-level handlePanelDrop doesn't also fire
+			event.stopPropagation();
+			try {
+				const data = JSON.parse(mimeData);
+				await addExternalTrackToPlaylist(data, toIndex);
+			} catch (e) {
+				toasts.error('Failed to add track to playlist');
+			}
+			return;
+		}
+
+		// Internal reorder
 		if (!selectedPlaylist || draggedIndex === null || draggedIndex === toIndex) {
 			draggedIndex = null;
 			return;
 		}
 
+		event.stopPropagation();
 		const fromIndex = draggedIndex;
 		draggedIndex = null;
 
@@ -189,6 +281,191 @@
 		}
 	}
 
+	// Convert external drag data to a playlist Track
+	function dragDataToTrack(data: Record<string, unknown>): Track {
+		return {
+			title: (data.title as string) || 'Unknown Track',
+			artist: data.artist as string | undefined,
+			album: data.album as string | undefined,
+			icon: data.icon as string | undefined,
+			path: data.path as string | undefined,
+			type: data.type as string | undefined,
+			uri: (data.mediaData as { resources?: Array<{ uri?: string }> })?.resources?.[0]?.uri,
+			mimeType: (data.mediaData as { resources?: Array<{ mimeType?: string }> })?.resources?.[0]?.mimeType,
+			serviceId: (data.mediaData as { metaData?: { serviceID?: string } })?.metaData?.serviceID,
+			duration: (data.mediaData as { resources?: Array<{ duration?: number }> })?.resources?.[0]?.duration
+		};
+	}
+
+	// Add a track from external drag data to the current playlist at a specific position
+	async function addExternalTrackToPlaylist(data: Record<string, unknown>, atIndex?: number) {
+		if (!selectedPlaylist) {
+			toasts.error('Open a playlist first to add tracks');
+			return;
+		}
+
+		// Reject containers (albums, folders) — they can't be played as individual tracks
+		if (data.type === 'container') {
+			toasts.error('Cannot add albums/folders to playlists — add individual tracks instead');
+			return;
+		}
+
+		try {
+			actionLoading = 'addExternal';
+			const newTrack = dragDataToTrack(data);
+			const newTracks = [...selectedPlaylist.tracks];
+			if (atIndex !== undefined && atIndex < newTracks.length) {
+				newTracks.splice(atIndex, 0, newTrack);
+			} else {
+				newTracks.push(newTrack);
+			}
+
+			// Optimistic update
+			selectedPlaylist = { ...selectedPlaylist, tracks: newTracks };
+
+			// Persist
+			await api.updatePlaylist(selectedPlaylist.id, { tracks: newTracks });
+			toasts.success(`Added "${newTrack.title}" to ${selectedPlaylist.name}`);
+		} catch (e) {
+			toasts.error('Failed to add track to playlist');
+			// Re-fetch to restore correct state
+			if (selectedPlaylist) {
+				await selectPlaylist(selectedPlaylist.id);
+			}
+		} finally {
+			actionLoading = null;
+		}
+	}
+
+	// Container-level handlers for external drag over the whole playlists panel
+	function handlePanelDragOver(event: DragEvent) {
+		if (!event.dataTransfer?.types.includes(DRAG_MIME)) return;
+		event.preventDefault();
+		event.dataTransfer.dropEffect = 'copy';
+		externalDragOver = true;
+	}
+
+	function handlePanelDragLeave(event: DragEvent) {
+		const relatedTarget = event.relatedTarget as HTMLElement | null;
+		const currentTarget = event.currentTarget as HTMLElement;
+		if (relatedTarget && currentTarget.contains(relatedTarget)) return;
+		externalDragOver = false;
+		dropTargetIndex = null;
+	}
+
+	async function handlePanelDrop(event: DragEvent) {
+		// Ignore internal reorders — only handle external drops
+		if (draggedIndex !== null) return;
+		const mimeData = event.dataTransfer?.getData(DRAG_MIME);
+		if (!mimeData) return;
+		event.preventDefault();
+		externalDragOver = false;
+		dropTargetIndex = null;
+
+		if (!selectedPlaylist) {
+			toasts.error('Open a playlist first to add tracks');
+			return;
+		}
+
+		try {
+			const data = JSON.parse(mimeData);
+			await addExternalTrackToPlaylist(data);
+		} catch (e) {
+			toasts.error('Failed to add track to playlist');
+		}
+	}
+
+	// Track selection functions for multi-select removal
+	function toggleTrackSelection(index: number) {
+		const newSet = new Set(selectedIndices);
+		if (newSet.has(index)) {
+			newSet.delete(index);
+		} else {
+			newSet.add(index);
+		}
+		selectedIndices = newSet;
+
+		// Auto-exit select mode if nothing selected
+		if (newSet.size === 0) {
+			selectMode = false;
+		}
+	}
+
+	function toggleSelectAll() {
+		if (!selectedPlaylist) return;
+		if (allSelected) {
+			selectedIndices = new Set();
+			selectMode = false;
+		} else {
+			selectedIndices = new Set(selectedPlaylist.tracks.map((_, i) => i));
+			selectMode = true;
+		}
+	}
+
+	async function removeSelectedTracks() {
+		if (!selectedPlaylist || selectedIndices.size === 0) return;
+
+		const count = selectedIndices.size;
+		if (!confirm(`Remove ${count} track${count > 1 ? 's' : ''} from "${selectedPlaylist.name}"?`)) return;
+
+		try {
+			actionLoading = 'removeSelected';
+			// Remove selected indices from tracks (sort descending to avoid index shift)
+			const indices = Array.from(selectedIndices).sort((a, b) => b - a);
+			const newTracks = [...selectedPlaylist.tracks];
+			for (const idx of indices) {
+				newTracks.splice(idx, 1);
+			}
+
+			// Persist to backend
+			await api.updatePlaylist(selectedPlaylist.id, { tracks: newTracks });
+			selectedPlaylist = { ...selectedPlaylist, tracks: newTracks };
+			selectedIndices = new Set();
+			selectMode = false;
+
+			// Update the playlist count in the list
+			await loadPlaylists();
+		} catch (e) {
+			toasts.error('Failed to remove tracks');
+			// Re-fetch to restore correct state
+			if (selectedPlaylist) {
+				await selectPlaylist(selectedPlaylist.id);
+			}
+		} finally {
+			actionLoading = null;
+		}
+	}
+
+	async function removeTrack(index: number, event: MouseEvent) {
+		event.stopPropagation();
+		if (!selectedPlaylist) return;
+
+		try {
+			actionLoading = `remove-${index}`;
+			const newTracks = [...selectedPlaylist.tracks];
+			newTracks.splice(index, 1);
+
+			await api.updatePlaylist(selectedPlaylist.id, { tracks: newTracks });
+			selectedPlaylist = { ...selectedPlaylist, tracks: newTracks };
+
+			// Update the playlist count in the list
+			await loadPlaylists();
+		} catch (e) {
+			toasts.error('Failed to remove track');
+			if (selectedPlaylist) {
+				await selectPlaylist(selectedPlaylist.id);
+			}
+		} finally {
+			actionLoading = null;
+		}
+	}
+
+	function clearSelectionOnBack() {
+		selectedIndices = new Set();
+		selectMode = false;
+		selectedPlaylist = null;
+	}
+
 	function formatDate(dateStr: string): string {
 		try {
 			const date = new Date(dateStr);
@@ -211,7 +488,14 @@
 	});
 </script>
 
-<div class="flex flex-col rounded-lg border border-zinc-800 bg-zinc-900/50" class:h-full={fullHeight}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="flex flex-col rounded-lg border bg-zinc-900/50 transition-all {externalDragOver ? 'border-green-500 ring-2 ring-green-500/50' : 'border-zinc-800'}"
+	class:h-full={fullHeight}
+	ondragover={handlePanelDragOver}
+	ondragleave={handlePanelDragLeave}
+	ondrop={handlePanelDrop}
+>
 	<!-- Header -->
 	<div class="flex flex-shrink-0 items-center justify-between border-b border-zinc-800">
 		<button
@@ -242,7 +526,11 @@
 		<div class="flex min-h-0 flex-1 overflow-hidden">
 			<!-- Playlist List -->
 			<div class="flex min-h-0 flex-1 flex-col border-r border-zinc-800 overflow-hidden" class:hidden={selectedPlaylist}>
-				{#if error}
+				{#if externalDragOver && !selectedPlaylist}
+					<div class="px-4 py-6 text-center text-sm text-green-400">
+						Open a playlist to drop tracks into it
+					</div>
+				{:else if error}
 					<div class="px-4 py-6 text-center text-sm text-red-400">
 						{error}
 					</div>
@@ -323,7 +611,7 @@
 					<div class="flex flex-shrink-0 items-center gap-2 border-b border-zinc-800 px-4 py-2">
 						<button
 							class="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
-							onclick={() => (selectedPlaylist = null)}
+							onclick={clearSelectionOnBack}
 							title="Back to list"
 						>
 							<ChevronLeft class="h-4 w-4" />
@@ -332,53 +620,125 @@
 							<p class="truncate text-sm font-medium text-zinc-200">{selectedPlaylist.name}</p>
 							<p class="text-xs text-zinc-500">{selectedPlaylist.tracks.length} tracks</p>
 						</div>
-						<button
-							class="flex items-center gap-1 rounded bg-green-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-green-500"
-							onclick={() => loadPlaylistToQueue(selectedPlaylist!.id)}
-							disabled={actionLoading === `load-${selectedPlaylist.id}` || actionLoading === `append-${selectedPlaylist.id}`}
-						>
-							{#if actionLoading === `load-${selectedPlaylist.id}`}
-								<Loader2 class="h-3.5 w-3.5 animate-spin" />
-							{:else}
-								<Play class="h-3.5 w-3.5" />
+						{#if selectMode || selectedIndices.size > 0}
+							<!-- Select mode controls -->
+							<button
+								class="rounded p-1.5 transition-colors hover:bg-zinc-700"
+								class:text-green-400={allSelected}
+								class:text-yellow-400={someSelected}
+								class:text-zinc-400={selectedIndices.size === 0}
+								onclick={toggleSelectAll}
+								title={allSelected ? 'Deselect all' : 'Select all'}
+							>
+								{#if allSelected}
+									<CheckSquare class="h-4 w-4" />
+								{:else if someSelected}
+									<MinusSquare class="h-4 w-4" />
+								{:else}
+									<Square class="h-4 w-4" />
+								{/if}
+							</button>
+							{#if selectedIndices.size > 0}
+								<span class="text-xs text-zinc-400">{selectedIndices.size} selected</span>
+								<button
+									class="rounded p-1.5 text-red-400 transition-colors hover:bg-zinc-700"
+									onclick={removeSelectedTracks}
+									disabled={actionLoading === 'removeSelected'}
+									title="Remove selected tracks"
+								>
+									{#if actionLoading === 'removeSelected'}
+										<Loader2 class="h-4 w-4 animate-spin" />
+									{:else}
+										<Trash2 class="h-4 w-4" />
+									{/if}
+								</button>
+								<button
+									class="rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700"
+									onclick={() => { selectedIndices = new Set(); selectMode = false; }}
+									title="Cancel selection"
+								>
+									<X class="h-4 w-4" />
+								</button>
 							{/if}
-							Play
-						</button>
-						<button
-							class="flex items-center gap-1 rounded border border-zinc-600 px-3 py-1 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
-							onclick={() => loadPlaylistToQueue(selectedPlaylist!.id, true)}
-							disabled={actionLoading === `load-${selectedPlaylist.id}` || actionLoading === `append-${selectedPlaylist.id}`}
-							title="Append to queue"
-						>
-							{#if actionLoading === `append-${selectedPlaylist.id}`}
-								<Loader2 class="h-3.5 w-3.5 animate-spin" />
-							{:else}
-								<ListPlus class="h-3.5 w-3.5" />
-							{/if}
-							Append
-						</button>
+						{:else}
+							<!-- Normal controls -->
+							<button
+								class="flex items-center gap-1 rounded bg-green-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-green-500"
+								onclick={() => loadPlaylistToQueue(selectedPlaylist!.id)}
+								disabled={actionLoading === `load-${selectedPlaylist.id}` || actionLoading === `append-${selectedPlaylist.id}`}
+							>
+								{#if actionLoading === `load-${selectedPlaylist.id}`}
+									<Loader2 class="h-3.5 w-3.5 animate-spin" />
+								{:else}
+									<Play class="h-3.5 w-3.5" />
+								{/if}
+								Play
+							</button>
+							<button
+								class="flex items-center gap-1 rounded border border-zinc-600 px-3 py-1 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
+								onclick={() => loadPlaylistToQueue(selectedPlaylist!.id, true)}
+								disabled={actionLoading === `load-${selectedPlaylist.id}` || actionLoading === `append-${selectedPlaylist.id}`}
+								title="Append to queue"
+							>
+								{#if actionLoading === `append-${selectedPlaylist.id}`}
+									<Loader2 class="h-3.5 w-3.5 animate-spin" />
+								{:else}
+									<ListPlus class="h-3.5 w-3.5" />
+								{/if}
+								Append
+							</button>
+						{/if}
 					</div>
 
 					<!-- Track list -->
 					<div class="min-h-0 flex-1 overflow-hidden">
 						<div class="h-full overflow-y-auto" class:max-h-52={!fullHeight}>
+						{#if selectedPlaylist.tracks.length === 0}
+							<div class="px-4 py-6 text-center text-sm text-zinc-500">
+								{#if externalDragOver}
+									<span class="text-green-400">Drop here to add to playlist</span>
+								{:else}
+									No tracks in playlist
+								{/if}
+							</div>
+						{:else}
 						{#each selectedPlaylist.tracks as track, i (i)}
 							<div
 								class="group flex items-center gap-2 px-2 py-1.5 transition-colors hover:bg-zinc-800/50"
-								class:border-t-2={dropTargetIndex === i && draggedIndex !== null && draggedIndex > i}
+								class:bg-zinc-800={selectedIndices.has(i)}
+								class:ring-1={selectedIndices.has(i)}
+								class:ring-green-500={selectedIndices.has(i)}
+								class:border-t-2={dropTargetIndex === i && (externalDragOver || (draggedIndex !== null && draggedIndex > i))}
 								class:border-b-2={dropTargetIndex === i && draggedIndex !== null && draggedIndex < i}
 								class:border-green-500={dropTargetIndex === i}
 								role="listitem"
-								draggable={true}
-								ondragstart={(e) => handleDragStart(e, i)}
+								draggable={!selectMode}
+								ondragstart={(e) => !selectMode && handleDragStart(e, i)}
 								ondragend={handleDragEnd}
 								ondragover={(e) => handleDragOver(e, i)}
 								ondragleave={handleDragLeave}
 								ondrop={(e) => handleDrop(e, i)}
 							>
-								<div class="flex-shrink-0 cursor-grab text-zinc-600 hover:text-zinc-400 active:cursor-grabbing">
-									<GripVertical class="h-4 w-4" />
-								</div>
+								<!-- Checkbox (in select mode) or Drag handle (normal mode) -->
+								{#if selectMode || selectedIndices.size > 0}
+									<button
+										class="flex-shrink-0 p-0.5 transition-colors"
+										class:text-green-400={selectedIndices.has(i)}
+										class:text-zinc-500={!selectedIndices.has(i)}
+										onclick={() => toggleTrackSelection(i)}
+										title={selectedIndices.has(i) ? 'Deselect' : 'Select'}
+									>
+										{#if selectedIndices.has(i)}
+											<CheckSquare class="h-4 w-4" />
+										{:else}
+											<Square class="h-4 w-4" />
+										{/if}
+									</button>
+								{:else}
+									<div class="flex-shrink-0 cursor-grab text-zinc-600 hover:text-zinc-400 active:cursor-grabbing">
+										<GripVertical class="h-4 w-4" />
+									</div>
+								{/if}
 								<span class="w-5 text-center text-xs text-zinc-500">{i + 1}</span>
 								{#if track.icon}
 									<img
@@ -399,10 +759,26 @@
 									{/if}
 								</div>
 								{#if track.duration}
-									<span class="text-xs text-zinc-500">{formatDuration(track.duration)}</span>
+									<span class="text-xs text-zinc-500 group-hover:hidden">{formatDuration(track.duration)}</span>
+								{/if}
+								<!-- Remove button (shown on hover, hidden in select mode) -->
+								{#if !(selectMode || selectedIndices.size > 0)}
+									<button
+										class="hidden flex-shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-red-400 group-hover:block"
+										onclick={(e) => removeTrack(i, e)}
+										disabled={actionLoading === `remove-${i}`}
+										title="Remove from playlist"
+									>
+										{#if actionLoading === `remove-${i}`}
+											<Loader2 class="h-4 w-4 animate-spin" />
+										{:else}
+											<X class="h-4 w-4" />
+										{/if}
+									</button>
 								{/if}
 							</div>
 						{/each}
+						{/if}
 						</div>
 					</div>
 				</div>

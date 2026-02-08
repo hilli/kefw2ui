@@ -8,19 +8,21 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
-	"strconv"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hilli/go-kef-w2/kefw2"
+
 	"github.com/hilli/kefw2ui/config"
 	"github.com/hilli/kefw2ui/playlist"
 	"github.com/hilli/kefw2ui/speaker"
 )
 
-// Options configures the server
+// Options configures the server.
 type Options struct {
 	Bind           string
 	Port           int
@@ -29,7 +31,7 @@ type Options struct {
 	SpeakerManager *speaker.Manager
 }
 
-// Server is the HTTP server for kefw2ui
+// Server is the HTTP server for kefw2ui.
 type Server struct {
 	opts       Options
 	mux        *http.ServeMux
@@ -45,7 +47,16 @@ type Server struct {
 	sseClientsMu sync.RWMutex
 }
 
-// responseWriter wraps http.ResponseWriter to capture status code
+// Content type constants used across browse/queue handlers.
+const (
+	contentTypeContainer = "container"
+	contentTypeAudio     = "audio"
+	browseSourceUPnP     = "upnp"
+	browseSourceRadio    = "radio"
+	browseSourcePodcasts = "podcasts"
+)
+
+// responseWriter wraps http.ResponseWriter to capture status code.
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -56,14 +67,14 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-// Flush implements http.Flusher for SSE support
+// Flush implements http.Flusher for SSE support.
 func (lrw *loggingResponseWriter) Flush() {
 	if flusher, ok := lrw.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
 }
 
-// loggingMiddleware logs all HTTP requests with method, path, status, and duration
+// loggingMiddleware logs all HTTP requests with method, path, status, and duration.
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -93,7 +104,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// New creates a new server instance
+// New creates a new server instance.
 func New(opts Options) *Server {
 	// Initialize playlist manager
 	playlistMgr, err := playlist.NewManager()
@@ -149,12 +160,17 @@ func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
 }
 
-// ListenAndServe starts the HTTP server
+// ListenAndServe starts the HTTP server.
 func (s *Server) ListenAndServe() error {
 	return s.httpServer.ListenAndServe()
 }
 
-// registerRoutes sets up all HTTP routes
+// Shutdown gracefully shuts down the HTTP server without interrupting active connections.
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.httpServer.Shutdown(ctx)
+}
+
+// registerRoutes sets up all HTTP routes.
 func (s *Server) registerRoutes() {
 	// API routes
 	s.mux.HandleFunc("/api/health", s.handleHealth)
@@ -166,6 +182,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/speakers/default", s.handleSpeakersDefault)
 	s.mux.HandleFunc("/api/speaker", s.handleSpeaker)
 	s.mux.HandleFunc("/api/speaker/logo", s.handleSpeakerLogo)
+	s.mux.HandleFunc("/api/proxy/image", s.handleProxyImage)
 
 	// Player controls
 	s.mux.HandleFunc("/api/player", s.handlePlayer)
@@ -228,7 +245,7 @@ func (s *Server) HandleSpeakerHealth(connected bool) {
 	s.broadcastSSE(payload)
 }
 
-// HandleSpeakerEvent is called by the speaker manager when events occur
+// HandleSpeakerEvent is called by the speaker manager when events occur.
 func (s *Server) HandleSpeakerEvent(event kefw2.Event) {
 	if event == nil {
 		return
@@ -274,7 +291,7 @@ func (s *Server) HandleSpeakerEvent(event kefw2.Event) {
 				"artist":   e.Artist,
 				"album":    e.Album,
 				"duration": e.Duration,
-				"icon":     e.Icon,
+				"icon":     s.proxyIconURL(e.Icon),
 			},
 		}
 	case *kefw2.PlayTimeEvent:
@@ -313,7 +330,7 @@ func (s *Server) HandleSpeakerEvent(event kefw2.Event) {
 	s.broadcastSSE(payload)
 }
 
-// broadcastSSE sends data to all connected SSE clients
+// broadcastSSE sends data to all connected SSE clients.
 func (s *Server) broadcastSSE(data []byte) {
 	s.sseClientsMu.RLock()
 	defer s.sseClientsMu.RUnlock()
@@ -327,8 +344,8 @@ func (s *Server) broadcastSSE(data []byte) {
 	}
 }
 
-// broadcastCurrentState sends the current speaker/player state to all SSE clients
-// Called when the active speaker changes so all clients get the new state
+// broadcastCurrentState sends the current speaker/player state to all SSE clients.
+// Called when the active speaker changes so all clients get the new state.
 func (s *Server) broadcastCurrentState() {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -399,7 +416,7 @@ func (s *Server) broadcastCurrentState() {
 				"title":     playerData.TrackRoles.Title,
 				"artist":    playerData.TrackRoles.MediaData.MetaData.Artist,
 				"album":     playerData.TrackRoles.MediaData.MetaData.Album,
-				"icon":      playerData.TrackRoles.Icon,
+				"icon":      s.proxyIconURL(playerData.TrackRoles.Icon),
 				"duration":  playerData.Status.Duration,
 				"position":  position,
 				"audioType": playerData.MediaRoles.AudioType,
@@ -411,16 +428,16 @@ func (s *Server) broadcastCurrentState() {
 	}
 }
 
-// handleHealth is a simple health check endpoint
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+// handleHealth is a simple health check endpoint.
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":           "ok",
 		"speakerConnected": s.manager.IsSpeakerConnected(),
 	})
 }
 
-// handleSpeakers returns the list of known speakers
+// handleSpeakers returns the list of known speakers.
 func (s *Server) handleSpeakers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -450,13 +467,13 @@ func (s *Server) handleSpeakers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"speakers":       speakerList,
 		"defaultSpeaker": defaultSpeakerIP,
 	})
 }
 
-// handleSpeakersDiscover triggers mDNS discovery
+// handleSpeakersDiscover triggers mDNS discovery.
 func (s *Server) handleSpeakersDiscover(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -482,12 +499,12 @@ func (s *Server) handleSpeakersDiscover(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"discovered": speakerList,
 	})
 }
 
-// handleSpeakersAdd adds a speaker by IP address
+// handleSpeakersAdd adds a speaker by IP address.
 func (s *Server) handleSpeakersAdd(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -531,7 +548,7 @@ func (s *Server) handleSpeakersAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"speaker": map[string]any{
 			"ip":       spk.IPAddress,
 			"name":     spk.Name,
@@ -541,7 +558,7 @@ func (s *Server) handleSpeakersAdd(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSpeakersDefault gets or sets the default speaker
+// handleSpeakersDefault gets or sets the default speaker.
 func (s *Server) handleSpeakersDefault(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -551,7 +568,7 @@ func (s *Server) handleSpeakersDefault(w http.ResponseWriter, r *http.Request) {
 			defaultIP = s.opts.Config.GetDefaultSpeaker()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"defaultSpeaker": defaultIP,
 		})
 
@@ -576,7 +593,7 @@ func (s *Server) handleSpeakersDefault(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"defaultSpeaker": req.IP,
 			"message":        "Default speaker updated",
 		})
@@ -590,7 +607,7 @@ func (s *Server) handleSpeakersDefault(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"message": "Default speaker cleared",
 		})
 
@@ -599,7 +616,7 @@ func (s *Server) handleSpeakersDefault(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSpeaker gets or sets the active speaker
+// handleSpeaker gets or sets the active speaker.
 func (s *Server) handleSpeaker(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -615,7 +632,7 @@ func (s *Server) handleSpeakerGet(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"active": nil,
 		})
 		return
@@ -630,7 +647,7 @@ func (s *Server) handleSpeakerGet(w http.ResponseWriter, r *http.Request) {
 	status, _ := spk.SpeakerState(ctx)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"active": map[string]any{
 			"ip":       spk.IPAddress,
 			"name":     spk.Name,
@@ -673,7 +690,7 @@ func (s *Server) handleSpeakerSet(w http.ResponseWriter, r *http.Request) {
 	s.handleSpeakerGet(w, r)
 }
 
-// handleSpeakerLogo proxies the KEF logo from the active speaker
+// handleSpeakerLogo proxies the KEF logo from the active speaker.
 func (s *Server) handleSpeakerLogo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -714,10 +731,105 @@ func (s *Server) handleSpeakerLogo(w http.ResponseWriter, r *http.Request) {
 	// Copy headers and body
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 24 hours
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
-// handlePlayer returns the current player state
+// proxyIconURL rewrites icon URLs that point to private/local IPs
+// to use the /api/proxy/image endpoint instead. External URLs pass through unchanged.
+// This allows the frontend to load images when accessed remotely via Tailscale.
+func (s *Server) proxyIconURL(iconURL string) string {
+	if iconURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(iconURL)
+	if err != nil {
+		return iconURL
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return iconURL
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return iconURL
+	}
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return "/api/proxy/image?url=" + url.QueryEscape(iconURL)
+	}
+	return iconURL
+}
+
+// proxyPlaylistIcons returns a copy of the playlist with icon URLs rewritten for the proxy.
+func (s *Server) proxyPlaylistIcons(pl *playlist.Playlist) *playlist.Playlist {
+	proxied := *pl
+	proxied.Tracks = make([]playlist.Track, len(pl.Tracks))
+	copy(proxied.Tracks, pl.Tracks)
+	for i := range proxied.Tracks {
+		proxied.Tracks[i].Icon = s.proxyIconURL(proxied.Tracks[i].Icon)
+	}
+	return &proxied
+}
+
+// handleProxyImage proxies image requests to speaker-local URLs.
+// This allows the frontend to load images from private IPs when accessed remotely via Tailscale.
+func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	targetURL := r.URL.Query().Get("url")
+	if targetURL == "" {
+		http.Error(w, "Missing url parameter", http.StatusBadRequest)
+		return
+	}
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		http.Error(w, "Invalid url parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Security: only proxy requests to private/local IPs
+	host := parsed.Hostname()
+	ip := net.ParseIP(host)
+	if ip == nil || (!ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast()) {
+		http.Error(w, "Only private IP addresses can be proxied", http.StatusForbidden)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "Upstream error", resp.StatusCode)
+		return
+	}
+
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+
+	// Limit response to 10MB to prevent abuse
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 10<<20))
+}
+
+// handlePlayer returns the current player state.
 func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -741,7 +853,7 @@ func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 		source, _ := spk.Source(ctx)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"state":    "stopped",
 			"volume":   volume,
 			"muted":    muted,
@@ -762,7 +874,7 @@ func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	position, _ := spk.SongProgressMS(ctx)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"state":     playerData.State,
 		"volume":    volume,
 		"muted":     muted,
@@ -770,7 +882,7 @@ func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 		"title":     playerData.TrackRoles.Title,
 		"artist":    playerData.TrackRoles.MediaData.MetaData.Artist,
 		"album":     playerData.TrackRoles.MediaData.MetaData.Album,
-		"icon":      playerData.TrackRoles.Icon,
+		"icon":      s.proxyIconURL(playerData.TrackRoles.Icon),
 		"duration":  playerData.Status.Duration,
 		"position":  position,
 		"audioType": playerData.MediaRoles.AudioType,
@@ -778,7 +890,7 @@ func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePlayerPlay toggles play/pause
+// handlePlayerPlay toggles play/pause.
 func (s *Server) handlePlayerPlay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -797,10 +909,10 @@ func (s *Server) handlePlayerPlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handlePlayerStop stops playback (for radio/streaming where pause doesn't apply)
+// handlePlayerStop stops playback (for radio/streaming where pause doesn't apply).
 func (s *Server) handlePlayerStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -819,10 +931,10 @@ func (s *Server) handlePlayerStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handlePlayerNext skips to next track
+// handlePlayerNext skips to next track.
 func (s *Server) handlePlayerNext(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -841,10 +953,10 @@ func (s *Server) handlePlayerNext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handlePlayerPrev goes to previous track
+// handlePlayerPrev goes to previous track.
 func (s *Server) handlePlayerPrev(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -863,10 +975,10 @@ func (s *Server) handlePlayerPrev(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handlePlayerSeek seeks to a specific position in the current track
+// handlePlayerSeek seeks to a specific position in the current track.
 func (s *Server) handlePlayerSeek(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -899,13 +1011,13 @@ func (s *Server) handlePlayerSeek(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":     "ok",
 		"positionMs": req.PositionMS,
 	})
 }
 
-// handlePlayerPower gets or sets power state (on/standby)
+// handlePlayerPower gets or sets power state (on/standby).
 func (s *Server) handlePlayerPower(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -925,7 +1037,7 @@ func (s *Server) handlePlayerPower(w http.ResponseWriter, r *http.Request) {
 		status, _ := spk.SpeakerState(ctx)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"poweredOn": isPoweredOn,
 			"status":    string(status),
 		})
@@ -959,21 +1071,28 @@ func (s *Server) handlePlayerPower(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			if req.PowerOn == nil {
+			switch {
+			case req.PowerOn == nil:
 				// Toggle
 				isPoweredOn, _ := spk.IsPoweredOn(ctx)
 				if isPoweredOn {
-					spk.PowerOff(ctx)
+					if err := spk.PowerOff(ctx); err != nil {
+						s.jsonError(w, "Failed to power off: "+err.Error(), http.StatusInternalServerError)
+						return
+					}
 				} else {
-					spk.SetSource(ctx, kefw2.SourceWiFi)
+					if err := spk.SetSource(ctx, kefw2.SourceWiFi); err != nil {
+						s.jsonError(w, "Failed to power on: "+err.Error(), http.StatusInternalServerError)
+						return
+					}
 				}
-			} else if *req.PowerOn {
+			case *req.PowerOn:
 				// Power on
 				if err := spk.SetSource(ctx, kefw2.SourceWiFi); err != nil {
 					s.jsonError(w, "Failed to power on: "+err.Error(), http.StatusInternalServerError)
 					return
 				}
-			} else {
+			default:
 				// Power off
 				if err := spk.PowerOff(ctx); err != nil {
 					s.jsonError(w, "Failed to power off: "+err.Error(), http.StatusInternalServerError)
@@ -987,7 +1106,7 @@ func (s *Server) handlePlayerPower(w http.ResponseWriter, r *http.Request) {
 		status, _ := spk.SpeakerState(ctx)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"poweredOn": isPoweredOn,
 			"status":    string(status),
 		})
@@ -997,7 +1116,7 @@ func (s *Server) handlePlayerPower(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handlePlayerVolume gets or sets volume
+// handlePlayerVolume gets or sets volume.
 func (s *Server) handlePlayerVolume(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -1013,7 +1132,7 @@ func (s *Server) handlePlayerVolume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"volume": volume})
+		_ = json.NewEncoder(w).Encode(map[string]any{"volume": volume})
 
 	case http.MethodPost:
 		var req struct {
@@ -1035,14 +1154,14 @@ func (s *Server) handlePlayerVolume(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"volume": req.Volume})
+		_ = json.NewEncoder(w).Encode(map[string]any{"volume": req.Volume})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handlePlayerMute gets or sets mute state
+// handlePlayerMute gets or sets mute state.
 func (s *Server) handlePlayerMute(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -1058,7 +1177,7 @@ func (s *Server) handlePlayerMute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"muted": muted})
+		_ = json.NewEncoder(w).Encode(map[string]any{"muted": muted})
 
 	case http.MethodPost:
 		var req struct {
@@ -1086,20 +1205,27 @@ func (s *Server) handlePlayerMute(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			if req.Muted == nil {
+			switch {
+			case req.Muted == nil:
 				// Toggle
 				muted, _ := spk.IsMuted(r.Context())
 				if muted {
-					spk.Unmute(r.Context())
+					if err := spk.Unmute(r.Context()); err != nil {
+						s.jsonError(w, "Failed to unmute: "+err.Error(), http.StatusInternalServerError)
+						return
+					}
 				} else {
-					spk.Mute(r.Context())
+					if err := spk.Mute(r.Context()); err != nil {
+						s.jsonError(w, "Failed to mute: "+err.Error(), http.StatusInternalServerError)
+						return
+					}
 				}
-			} else if *req.Muted {
+			case *req.Muted:
 				if err := spk.Mute(r.Context()); err != nil {
 					s.jsonError(w, "Failed to mute: "+err.Error(), http.StatusInternalServerError)
 					return
 				}
-			} else {
+			default:
 				if err := spk.Unmute(r.Context()); err != nil {
 					s.jsonError(w, "Failed to unmute: "+err.Error(), http.StatusInternalServerError)
 					return
@@ -1109,14 +1235,14 @@ func (s *Server) handlePlayerMute(w http.ResponseWriter, r *http.Request) {
 
 		muted, _ := spk.IsMuted(r.Context())
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"muted": muted})
+		_ = json.NewEncoder(w).Encode(map[string]any{"muted": muted})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handlePlayerSource gets or sets the audio source
+// handlePlayerSource gets or sets the audio source.
 func (s *Server) handlePlayerSource(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -1132,7 +1258,7 @@ func (s *Server) handlePlayerSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"source": string(source)})
+		_ = json.NewEncoder(w).Encode(map[string]any{"source": string(source)})
 
 	case http.MethodPost:
 		var req struct {
@@ -1150,14 +1276,14 @@ func (s *Server) handlePlayerSource(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"source": req.Source})
+		_ = json.NewEncoder(w).Encode(map[string]any{"source": req.Source})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handleQueue handles queue operations
+// handleQueue handles queue operations.
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1178,7 +1304,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Queue might be empty or not available
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tracks":       []any{},
 			"currentIndex": -1,
 		})
@@ -1187,15 +1313,15 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 
 	// Get current player data to identify current track
 	playerData, playerErr := spk.PlayerData(ctx)
-	currentIndex := -1
-	if playerErr == nil && playerData.TrackRoles.ID != "" {
-		// TrackRoles.ID is the 1-based queue index when playing from queue
-		if idx, err := strconv.Atoi(playerData.TrackRoles.ID); err == nil && idx > 0 {
-			currentIndex = idx - 1
-		}
+	nowPlayingPath := ""
+	nowPlayingTitle := ""
+	if playerErr == nil {
+		nowPlayingPath = playerData.TrackRoles.Path
+		nowPlayingTitle = playerData.TrackRoles.Title
 	}
 
-	// Convert to simplified track list
+	// Convert to simplified track list and find current track by matching path
+	currentIndex := -1
 	tracks := make([]map[string]any, 0, len(queueResp.Rows))
 	for i, item := range queueResp.Rows {
 		track := map[string]any{
@@ -1203,7 +1329,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 			"title":    item.Title,
 			"id":       item.ID,
 			"path":     item.Path,
-			"icon":     item.Icon,
+			"icon":     s.proxyIconURL(item.Icon),
 			"type":     item.Type,
 			"duration": 0,
 		}
@@ -1218,17 +1344,32 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Match current track by path (speaker returns the item's path in TrackRoles.Path)
+		if currentIndex == -1 && nowPlayingPath != "" && item.Path == nowPlayingPath {
+			currentIndex = i
+		}
+
 		tracks = append(tracks, track)
 	}
 
+	// Fallback: match by title if path didn't match (e.g. non-queue playback)
+	if currentIndex == -1 && nowPlayingTitle != "" {
+		for i, item := range queueResp.Rows {
+			if item.Title == nowPlayingTitle {
+				currentIndex = i
+				break
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"tracks":       tracks,
 		"currentIndex": currentIndex,
 	})
 }
 
-// handleQueuePlay plays a specific track in the queue
+// handleQueuePlay plays a specific track in the queue.
 func (s *Server) handleQueuePlay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1263,17 +1404,16 @@ func (s *Server) handleQueuePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	track := queueResp.Rows[req.Index]
-	log.Printf("Playing queue track: index=%d, title=%q, path=%q, type=%q", req.Index, track.Title, track.Path, track.Type)
 	if err := airable.PlayQueueIndex(req.Index, &track); err != nil {
 		s.jsonError(w, "Failed to play track: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleQueueRemove removes tracks from the queue
+// handleQueueRemove removes tracks from the queue.
 func (s *Server) handleQueueRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1306,10 +1446,10 @@ func (s *Server) handleQueueRemove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleQueueMove moves a track within the queue
+// handleQueueMove moves a track within the queue.
 func (s *Server) handleQueueMove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1338,10 +1478,10 @@ func (s *Server) handleQueueMove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleQueueClear clears the entire queue
+// handleQueueClear clears the entire queue.
 func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1361,10 +1501,10 @@ func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleQueueMode gets or sets the play mode (shuffle/repeat)
+// handleQueueMode gets or sets the play mode (shuffle/repeat).
 func (s *Server) handleQueueMode(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -1386,7 +1526,7 @@ func (s *Server) handleQueueMode(w http.ResponseWriter, r *http.Request) {
 		repeat, _ := airable.GetRepeatMode()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"mode":    mode,
 			"shuffle": shuffle,
 			"repeat":  repeat,
@@ -1433,7 +1573,7 @@ func (s *Server) handleQueueMode(w http.ResponseWriter, r *http.Request) {
 		repeat, _ := airable.GetRepeatMode()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"mode":    mode,
 			"shuffle": shuffle,
 			"repeat":  repeat,
@@ -1444,7 +1584,7 @@ func (s *Server) handleQueueMode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handlePlaylists handles listing and creating playlists
+// handlePlaylists handles listing and creating playlists.
 func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 	if s.playlists == nil {
 		s.jsonError(w, "Playlist manager not available", http.StatusServiceUnavailable)
@@ -1475,7 +1615,7 @@ func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"playlists": playlistsWithCount,
 		})
 
@@ -1504,8 +1644,8 @@ func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"playlist": pl,
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"playlist": s.proxyPlaylistIcons(pl),
 		})
 
 	default:
@@ -1513,7 +1653,7 @@ func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handlePlaylist handles operations on a single playlist
+// handlePlaylist handles operations on a single playlist.
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	if s.playlists == nil {
 		s.jsonError(w, "Playlist manager not available", http.StatusServiceUnavailable)
@@ -1537,8 +1677,8 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"playlist": pl,
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"playlist": s.proxyPlaylistIcons(pl),
 		})
 
 	case http.MethodPut:
@@ -1560,8 +1700,8 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"playlist": pl,
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"playlist": s.proxyPlaylistIcons(pl),
 		})
 
 	case http.MethodDelete:
@@ -1572,14 +1712,14 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handleSaveQueueAsPlaylist saves the current queue as a new playlist
+// handleSaveQueueAsPlaylist saves the current queue as a new playlist.
 func (s *Server) handleSaveQueueAsPlaylist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1625,8 +1765,13 @@ func (s *Server) handleSaveQueueAsPlaylist(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Convert queue items to playlist tracks
-	tracks := make([]playlist.Track, len(queueResp.Rows))
-	for i, item := range queueResp.Rows {
+	tracks := make([]playlist.Track, 0, len(queueResp.Rows))
+	for _, item := range queueResp.Rows {
+		// Skip non-playable items (containers, etc.)
+		if item.Type == contentTypeContainer {
+			continue
+		}
+
 		track := playlist.Track{
 			Title: item.Title,
 			ID:    item.ID,
@@ -1644,7 +1789,11 @@ func (s *Server) handleSaveQueueAsPlaylist(w http.ResponseWriter, r *http.Reques
 				track.MimeType = item.MediaData.Resources[0].MimeType
 			}
 		}
-		tracks[i] = track
+
+		// Note: queue items may have ephemeral paths like "playlists:item/N" that
+		// can't be re-resolved later. When loading back, the URI is used instead.
+
+		tracks = append(tracks, track)
 	}
 
 	// Create playlist
@@ -1656,12 +1805,12 @@ func (s *Server) handleSaveQueueAsPlaylist(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]any{
-		"playlist": pl,
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"playlist": s.proxyPlaylistIcons(pl),
 	})
 }
 
-// handleLoadPlaylist loads a playlist to the speaker's queue
+// handleLoadPlaylist loads a playlist to the speaker's queue.
 func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1712,21 +1861,44 @@ func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 			s.jsonError(w, "Failed to clear queue: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Give the speaker time to process the clear before adding new items
+		time.Sleep(500 * time.Millisecond)
 	}
 
-	// Convert playlist tracks to ContentItems
-	contentItems := make([]kefw2.ContentItem, len(pl.Tracks))
-	for i, track := range pl.Tracks {
+	// Convert playlist tracks to ContentItems, filtering out non-playable items
+	contentItems := make([]kefw2.ContentItem, 0, len(pl.Tracks))
+	skipped := 0
+	for _, track := range pl.Tracks {
+		// Skip containers (albums, folders) — they can't be played as individual tracks
+		if track.Type == contentTypeContainer {
+			skipped++
+			continue
+		}
+
+		// Skip tracks with no playback URI
+		if track.URI == "" {
+			skipped++
+			continue
+		}
+
 		// Determine service ID, default to UPnP for local media
 		serviceID := track.ServiceID
 		if serviceID == "" {
 			serviceID = "UPnP"
 		}
 
-		contentItems[i] = kefw2.ContentItem{
+		// Fix paths: queue-internal paths like "playlists:item/N" are ephemeral
+		// and can't be resolved by the speaker. Use the URI as the path instead,
+		// which works for addexternalitems since the speaker plays from the URI.
+		path := track.Path
+		if strings.HasPrefix(path, "playlists:item/") || path == "" {
+			path = track.URI
+		}
+
+		contentItems = append(contentItems, kefw2.ContentItem{
 			Title: track.Title,
 			ID:    track.ID,
-			Path:  track.Path,
+			Path:  path,
 			Icon:  track.Icon,
 			Type:  track.Type,
 			MediaData: &kefw2.MediaData{
@@ -1743,7 +1915,12 @@ func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
-		}
+		})
+	}
+
+	if len(contentItems) == 0 {
+		s.jsonError(w, "No playable tracks in playlist", http.StatusBadRequest)
+		return
 	}
 
 	// Add tracks to queue and start playing
@@ -1753,13 +1930,14 @@ func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":     "ok",
-		"trackCount": len(pl.Tracks),
+		"trackCount": len(contentItems),
+		"skipped":    skipped,
 	})
 }
 
-// BrowseItem represents a browsable content item for the API response
+// BrowseItem represents a browsable content item for the API response.
 type BrowseItem struct {
 	Title         string           `json:"title"`
 	Type          string           `json:"type"` // "container", "audio", "query"
@@ -1774,10 +1952,11 @@ type BrowseItem struct {
 	AudioType     string           `json:"audioType,omitempty"`     // "audioBroadcast" for radio
 	MediaData     *kefw2.MediaData `json:"mediaData,omitempty"`     // Required for queue playback of airable content
 	ContainerPath string           `json:"containerPath,omitempty"` // Parent container path for podcast episodes
+	SearchQuery   string           `json:"searchQuery,omitempty"`   // If set, clicking triggers this search instead of browsing
 }
 
-// handleBrowse handles content browsing for UPnP, Radio, and Podcasts
-// Routes:
+// handleBrowse handles content browsing for UPnP, Radio, and Podcasts.
+// Routes:.
 //   - GET /api/browse/sources - List available content sources
 //   - GET /api/browse/upnp - List UPnP media servers
 //   - GET /api/browse/upnp/{path...} - Browse UPnP container
@@ -1820,24 +1999,24 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "" || path == "sources":
 		s.handleBrowseSources(w, r)
-	case path == "upnp":
+	case path == browseSourceUPnP:
 		s.handleBrowseUPnP(w, r, "")
-	case strings.HasPrefix(path, "upnp/"):
-		s.handleBrowseUPnP(w, r, strings.TrimPrefix(path, "upnp/"))
-	case path == "radio":
+	case strings.HasPrefix(path, browseSourceUPnP+"/"):
+		s.handleBrowseUPnP(w, r, strings.TrimPrefix(path, browseSourceUPnP+"/"))
+	case path == browseSourceRadio:
 		s.handleBrowseRadio(w, r, "")
-	case strings.HasPrefix(path, "radio/"):
-		s.handleBrowseRadio(w, r, strings.TrimPrefix(path, "radio/"))
-	case path == "podcasts":
+	case strings.HasPrefix(path, browseSourceRadio+"/"):
+		s.handleBrowseRadio(w, r, strings.TrimPrefix(path, browseSourceRadio+"/"))
+	case path == browseSourcePodcasts:
 		s.handleBrowsePodcasts(w, r, "")
-	case strings.HasPrefix(path, "podcasts/"):
-		s.handleBrowsePodcasts(w, r, strings.TrimPrefix(path, "podcasts/"))
+	case strings.HasPrefix(path, browseSourcePodcasts+"/"):
+		s.handleBrowsePodcasts(w, r, strings.TrimPrefix(path, browseSourcePodcasts+"/"))
 	default:
 		s.jsonError(w, "Unknown browse path", http.StatusNotFound)
 	}
 }
 
-// handleBrowseSources returns available content sources
+// handleBrowseSources returns available content sources.
 func (s *Server) handleBrowseSources(w http.ResponseWriter, _ *http.Request) {
 	sources := []map[string]any{
 		{
@@ -1861,12 +2040,14 @@ func (s *Server) handleBrowseSources(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"sources": sources,
 	})
 }
 
-// handleBrowseUPnP handles UPnP media server browsing
+// handleBrowseUPnP handles UPnP media server browsing.
+//
+//nolint:gocyclo // UPnP browsing inherently requires many conditional branches
 func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpath string) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -1886,7 +2067,7 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 		index, loadErr := kefw2.LoadTrackIndexCached()
 		if loadErr != nil || index == nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items":      []BrowseItem{},
 				"totalCount": 0,
 				"source":     "upnp",
@@ -1899,7 +2080,7 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 		results := kefw2.SearchTracks(index, searchQuery, 100)
 		if len(results) == 0 {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items":      []BrowseItem{},
 				"totalCount": 0,
 				"source":     "upnp",
@@ -1911,12 +2092,30 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 
 		// Convert search results to BrowseItems
 		items := make([]BrowseItem, 0, len(results))
+
+		// For artist searches, prepend synthetic album headers so albums are easy to find
+		if strings.HasPrefix(strings.ToLower(searchQuery), "artist:") {
+			albums := kefw2.AlbumsForArtist(results)
+			for i, album := range albums {
+				item := BrowseItem{
+					Title:       album.Album,
+					Type:        contentTypeContainer,
+					Path:        fmt.Sprintf("album-header-%d", i),
+					Icon:        s.proxyIconURL(album.Icon),
+					Artist:      album.Artist,
+					Description: fmt.Sprintf("%d tracks", album.TrackCount),
+					SearchQuery: fmt.Sprintf(`album:"%s"`, album.Album),
+				}
+				items = append(items, item)
+			}
+		}
+
 		for _, track := range results {
 			item := BrowseItem{
 				Title:    track.Title,
-				Type:     "audio",
+				Type:     contentTypeAudio,
 				Path:     track.Path,
-				Icon:     track.Icon,
+				Icon:     s.proxyIconURL(track.Icon),
 				Artist:   track.Artist,
 				Album:    track.Album,
 				Duration: track.Duration,
@@ -1940,7 +2139,7 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"items":      items,
 			"totalCount": len(items),
 			"source":     "upnp",
@@ -2007,9 +2206,9 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 			Title:     row.Title,
 			Type:      row.Type,
 			Path:      row.Path,
-			Icon:      row.GetThumbnail(),
+			Icon:      s.proxyIconURL(row.GetThumbnail()),
 			ID:        row.ID,
-			Playable:  row.Type == "audio" || row.ContainerPlayable,
+			Playable:  row.Type == contentTypeAudio || row.ContainerPlayable,
 			AudioType: row.AudioType,
 			MediaData: row.MediaData, // Include full media data for queue playback
 		}
@@ -2030,14 +2229,14 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"items":      items,
 		"totalCount": resp.RowsCount,
 		"source":     "upnp",
 	})
 }
 
-// handleBrowseRadio handles internet radio browsing
+// handleBrowseRadio handles internet radio browsing.
 func (s *Server) handleBrowseRadio(w http.ResponseWriter, r *http.Request, subpath string) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -2098,10 +2297,10 @@ func (s *Server) handleBrowseRadio(w http.ResponseWriter, r *http.Request, subpa
 			Title:       row.Title,
 			Type:        row.Type,
 			Path:        row.Path,
-			Icon:        row.GetThumbnail(),
+			Icon:        s.proxyIconURL(row.GetThumbnail()),
 			ID:          row.ID,
 			Description: row.LongDescription,
-			Playable:    row.Type == "audio" || row.ContainerPlayable || row.AudioType == "audioBroadcast",
+			Playable:    row.Type == contentTypeAudio || row.ContainerPlayable || row.AudioType == "audioBroadcast",
 			AudioType:   row.AudioType,
 			MediaData:   row.MediaData, // Include full media data for queue playback
 		}
@@ -2110,14 +2309,14 @@ func (s *Server) handleBrowseRadio(w http.ResponseWriter, r *http.Request, subpa
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"items":      items,
 		"totalCount": resp.RowsCount,
 		"source":     "radio",
 	})
 }
 
-// handleBrowsePodcasts handles podcast browsing
+// handleBrowsePodcasts handles podcast browsing.
 func (s *Server) handleBrowsePodcasts(w http.ResponseWriter, r *http.Request, subpath string) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -2170,7 +2369,6 @@ func (s *Server) handleBrowsePodcasts(w http.ResponseWriter, r *http.Request, su
 
 	// Convert to API response format
 	items := make([]BrowseItem, 0, len(resp.Rows))
-	log.Printf("Podcast browse: got %d rows", len(resp.Rows))
 
 	// If we're browsing an episodes container, store the container path for playback
 	// Episodes need their parent container path to play correctly
@@ -2179,33 +2377,22 @@ func (s *Server) handleBrowsePodcasts(w http.ResponseWriter, r *http.Request, su
 		episodesContainerPath = itemPath
 	}
 
-	for i, row := range resp.Rows {
+	for _, row := range resp.Rows {
 		item := BrowseItem{
 			Title:       row.Title,
 			Type:        row.Type,
 			Path:        row.Path,
-			Icon:        row.GetThumbnail(),
+			Icon:        s.proxyIconURL(row.GetThumbnail()),
 			ID:          row.ID,
 			Description: row.LongDescription,
-			Playable:    row.Type == "audio",
+			Playable:    row.Type == contentTypeAudio,
 			AudioType:   row.AudioType,
 			MediaData:   row.MediaData, // Include full media data for queue playback
 		}
 
 		// For podcast episodes, add the container path to Context for playback
-		if episodesContainerPath != "" && row.Type == "audio" {
+		if episodesContainerPath != "" && row.Type == contentTypeAudio {
 			item.ContainerPath = episodesContainerPath
-		}
-
-		// Debug log for first few items
-		if i < 3 {
-			hasMedia := row.MediaData != nil
-			resCount := 0
-			if hasMedia {
-				resCount = len(row.MediaData.Resources)
-			}
-			log.Printf("  item[%d]: type=%q, hasMediaData=%v, resources=%d, title=%q",
-				i, row.Type, hasMedia, resCount, row.Title)
 		}
 
 		// Add duration if available
@@ -2217,14 +2404,14 @@ func (s *Server) handleBrowsePodcasts(w http.ResponseWriter, r *http.Request, su
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"items":      items,
 		"totalCount": resp.RowsCount,
 		"source":     "podcasts",
 	})
 }
 
-// handleBrowsePlay handles playing a browsed item
+// handleBrowsePlay handles playing a browsed item.
 func (s *Server) handleBrowsePlay(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -2258,13 +2445,13 @@ func (s *Server) handleBrowsePlay(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	switch req.Source {
-	case "upnp":
-		if req.Type == "container" {
+	case browseSourceUPnP:
+		if req.Type == contentTypeContainer {
 			err = airable.PlayUPnPContainer(req.Path)
 		} else {
 			err = airable.PlayUPnPByPath(req.Path)
 		}
-	case "radio":
+	case browseSourceRadio:
 		// Get station details and play
 		station, getErr := airable.GetRadioStationDetails(req.Path)
 		if getErr != nil {
@@ -2272,7 +2459,7 @@ func (s *Server) handleBrowsePlay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = airable.ResolveAndPlayRadioStation(station)
-	case "podcasts":
+	case browseSourcePodcasts:
 		// Build ContentItem from request data - include mediaData if available for direct playback
 		episode := &kefw2.ContentItem{
 			Path:      req.Path,
@@ -2302,12 +2489,12 @@ func (s *Server) handleBrowsePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status": "ok",
 	})
 }
 
-// handleBrowseAddToQueue adds a browsed item to the queue without playing
+// handleBrowseAddToQueue adds a browsed item to the queue without playing.
 func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -2342,8 +2529,8 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 	var tracksAdded int
 
 	switch req.Source {
-	case "upnp":
-		if req.Type == "container" {
+	case browseSourceUPnP:
+		if req.Type == contentTypeContainer {
 			// Get all tracks from container recursively and add to queue
 			tracks, getErr := airable.GetContainerTracksRecursive(req.Path)
 			if getErr != nil {
@@ -2364,18 +2551,19 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			var track *kefw2.ContentItem
-			if resp.Roles != nil {
+			switch {
+			case resp.Roles != nil:
 				track = resp.Roles
-			} else if len(resp.Rows) > 0 {
+			case len(resp.Rows) > 0:
 				track = &resp.Rows[0]
-			} else {
+			default:
 				s.jsonError(w, "Track not found", http.StatusNotFound)
 				return
 			}
 			err = airable.AddToQueue([]kefw2.ContentItem{*track}, false)
 			tracksAdded = 1
 		}
-	case "radio":
+	case browseSourceRadio:
 		// For radio stations, use mediaData from request if available
 		// Otherwise try to fetch full details
 		var station *kefw2.ContentItem
@@ -2383,7 +2571,7 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 			// Use provided media data (from browser)
 			station = &kefw2.ContentItem{
 				Title:     req.Title,
-				Type:      "audio",
+				Type:      contentTypeAudio,
 				AudioType: req.AudioType,
 				Path:      req.Path,
 				Icon:      req.Icon,
@@ -2397,7 +2585,7 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 				// Fallback: construct minimal ContentItem if fetch fails
 				station = &kefw2.ContentItem{
 					Title:     req.Title,
-					Type:      "audio",
+					Type:      contentTypeAudio,
 					AudioType: req.AudioType,
 					Path:      req.Path,
 					Icon:      req.Icon,
@@ -2406,7 +2594,7 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 		}
 		err = airable.AddToQueue([]kefw2.ContentItem{*station}, false)
 		tracksAdded = 1
-	case "podcasts":
+	case browseSourcePodcasts:
 		// For podcast episodes, use mediaData from request if available
 		// Podcast episode paths cannot be fetched directly, so we rely on browser data
 		var episode *kefw2.ContentItem
@@ -2414,7 +2602,7 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 			// Use provided media data (from browser)
 			episode = &kefw2.ContentItem{
 				Title:     req.Title,
-				Type:      "audio",
+				Type:      contentTypeAudio,
 				Path:      req.Path,
 				Icon:      req.Icon,
 				MediaData: req.MediaData,
@@ -2427,7 +2615,7 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 				// Fallback: construct minimal ContentItem if fetch fails
 				episode = &kefw2.ContentItem{
 					Title: req.Title,
-					Type:  "audio",
+					Type:  contentTypeAudio,
 					Path:  req.Path,
 					Icon:  req.Icon,
 				}
@@ -2446,13 +2634,13 @@ func (s *Server) handleBrowseAddToQueue(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":      "ok",
 		"tracksAdded": tracksAdded,
 	})
 }
 
-// handleBrowseFavorite adds or removes an item from favorites
+// handleBrowseFavorite adds or removes an item from favorites.
 func (s *Server) handleBrowseFavorite(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -2489,13 +2677,13 @@ func (s *Server) handleBrowseFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Source {
-	case "radio":
+	case browseSourceRadio:
 		if req.Add {
 			err = airable.AddRadioFavorite(item)
 		} else {
 			err = airable.RemoveRadioFavorite(item)
 		}
-	case "podcasts":
+	case browseSourcePodcasts:
 		if req.Add {
 			err = airable.AddPodcastFavorite(item)
 		} else {
@@ -2521,13 +2709,13 @@ func (s *Server) handleBrowseFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":  "ok",
 		"message": "Successfully " + action + " favorites",
 	})
 }
 
-// handleSettings returns app-level settings
+// handleSettings returns app-level settings.
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2536,7 +2724,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Return app settings
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"version": "1.0.0",
 		"server": map[string]any{
 			"port": s.opts.Port,
@@ -2545,7 +2733,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSpeakerSettings returns and updates speaker-specific settings
+// handleSpeakerSettings returns and updates speaker-specific settings.
 func (s *Server) handleSpeakerSettings(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -2565,7 +2753,7 @@ func (s *Server) handleSpeakerSettings(w http.ResponseWriter, r *http.Request) {
 		isPoweredOn, _ := spk.IsPoweredOn(ctx)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"speaker": map[string]any{
 				"ip":         spk.IPAddress,
 				"name":       spk.Name,
@@ -2606,7 +2794,7 @@ func (s *Server) handleSpeakerSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "ok",
 		})
 
@@ -2615,7 +2803,7 @@ func (s *Server) handleSpeakerSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleEQSettings returns and updates EQ/DSP settings
+// handleEQSettings returns and updates EQ/DSP settings.
 func (s *Server) handleEQSettings(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
@@ -2635,7 +2823,7 @@ func (s *Server) handleEQSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"eq": map[string]any{
 				"profileName":     eqProfile.ProfileName,
 				"bassExtension":   eqProfile.BassExtension,
@@ -2667,7 +2855,7 @@ func (s *Server) handleEQSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUPnPSettings returns and updates UPnP/media server settings
+// handleUPnPSettings returns and updates UPnP/media server settings.
 func (s *Server) handleUPnPSettings(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Config == nil {
 		s.jsonError(w, "Config not available", http.StatusInternalServerError)
@@ -2678,7 +2866,7 @@ func (s *Server) handleUPnPSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		upnp := s.opts.Config.GetUPnPConfig()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"defaultServer":     upnp.DefaultServer,
 			"defaultServerPath": upnp.DefaultServerPath,
 			"browseContainer":   upnp.BrowseContainer,
@@ -2730,7 +2918,7 @@ func (s *Server) handleUPnPSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":            "ok",
 			"defaultServer":     upnp.DefaultServer,
 			"defaultServerPath": upnp.DefaultServerPath,
@@ -2743,7 +2931,7 @@ func (s *Server) handleUPnPSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUPnPServers returns available UPnP media servers
+// handleUPnPServers returns available UPnP media servers.
 func (s *Server) handleUPnPServers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2769,17 +2957,17 @@ func (s *Server) handleUPnPServers(w http.ResponseWriter, r *http.Request) {
 		result = append(result, map[string]string{
 			"name": server.Title,
 			"path": server.Path,
-			"icon": server.Icon,
+			"icon": s.proxyIconURL(server.Icon),
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"servers": result,
 	})
 }
 
-// handleUPnPContainers returns containers at a given path (for folder picker)
+// handleUPnPContainers returns containers at a given path (for folder picker).
 func (s *Server) handleUPnPContainers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2818,13 +3006,13 @@ func (s *Server) handleUPnPContainers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"path":       containerPath,
 		"containers": containers,
 	})
 }
 
-// handleSSE handles Server-Sent Events connections
+// handleSSE handles Server-Sent Events connections.
 func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -2875,7 +3063,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// sendInitialState sends the current speaker/player state to a newly connected SSE client
+// sendInitialState sends the current speaker/player state to a newly connected SSE client.
 func (s *Server) sendInitialState(w http.ResponseWriter, flusher http.Flusher) {
 	// Send connected event
 	fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"connected\"}\n\n")
@@ -2960,7 +3148,7 @@ func (s *Server) sendInitialState(w http.ResponseWriter, flusher http.Flusher) {
 				"title":     playerData.TrackRoles.Title,
 				"artist":    playerData.TrackRoles.MediaData.MetaData.Artist,
 				"album":     playerData.TrackRoles.MediaData.MetaData.Album,
-				"icon":      playerData.TrackRoles.Icon,
+				"icon":      s.proxyIconURL(playerData.TrackRoles.Icon),
 				"duration":  playerData.Status.Duration,
 				"position":  position,
 				"audioType": playerData.MediaRoles.AudioType,
@@ -2972,7 +3160,7 @@ func (s *Server) sendInitialState(w http.ResponseWriter, flusher http.Flusher) {
 	}
 }
 
-// handleFrontend serves the embedded frontend files
+// handleFrontend serves the embedded frontend files.
 func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
 	// Try to get the frontend build subdirectory
 	frontendBuild, err := fs.Sub(s.opts.FrontendFS, "frontend/build")
@@ -3014,14 +3202,14 @@ func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
 		fileServer.ServeHTTP(w, r)
 		return
 	}
-	file.Close()
+	_ = file.Close()
 
 	fileServer.ServeHTTP(w, r)
 }
 
-// jsonError sends a JSON error response
+// jsonError sends a JSON error response.
 func (s *Server) jsonError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

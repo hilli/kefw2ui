@@ -9,7 +9,7 @@ import (
 	"github.com/hilli/go-kef-w2/kefw2"
 )
 
-// Manager handles speaker discovery and active speaker management
+// Manager handles speaker discovery and active speaker management.
 type Manager struct {
 	mu            sync.RWMutex
 	speakers      map[string]*kefw2.KEFSpeaker
@@ -25,35 +25,35 @@ type Manager struct {
 	speakerConnected bool
 }
 
-// NewManager creates a new speaker manager
+// NewManager creates a new speaker manager.
 func NewManager() *Manager {
 	return &Manager{
 		speakers: make(map[string]*kefw2.KEFSpeaker),
 	}
 }
 
-// SetEventCallback sets the callback for speaker events
+// SetEventCallback sets the callback for speaker events.
 func (m *Manager) SetEventCallback(cb func(event kefw2.Event)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onEvent = cb
 }
 
-// SetHealthCallback sets the callback for speaker connectivity changes
+// SetHealthCallback sets the callback for speaker connectivity changes.
 func (m *Manager) SetHealthCallback(cb func(connected bool)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onHealth = cb
 }
 
-// IsSpeakerConnected returns whether the active speaker is reachable
+// IsSpeakerConnected returns whether the active speaker is reachable.
 func (m *Manager) IsSpeakerConnected() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.speakerConnected
 }
 
-// setSpeakerConnected updates connectivity state and fires the health callback
+// setSpeakerConnected updates connectivity state and fires the health callback.
 func (m *Manager) setSpeakerConnected(connected bool) {
 	m.mu.Lock()
 	changed := m.speakerConnected != connected
@@ -66,7 +66,7 @@ func (m *Manager) setSpeakerConnected(connected bool) {
 	}
 }
 
-// Discover finds speakers on the network using mDNS
+// Discover finds speakers on the network using mDNS.
 func (m *Manager) Discover(ctx context.Context) ([]*kefw2.KEFSpeaker, error) {
 	// Use 5 second discovery timeout
 	speakers, err := kefw2.DiscoverSpeakers(ctx, 5*time.Second)
@@ -84,8 +84,8 @@ func (m *Manager) Discover(ctx context.Context) ([]*kefw2.KEFSpeaker, error) {
 	return speakers, nil
 }
 
-// AddSpeaker manually adds a speaker by IP address
-func (m *Manager) AddSpeaker(ctx context.Context, ip string) (*kefw2.KEFSpeaker, error) {
+// AddSpeaker manually adds a speaker by IP address.
+func (m *Manager) AddSpeaker(_ context.Context, ip string) (*kefw2.KEFSpeaker, error) {
 	// Use a longer timeout for manual add - speakers in standby can be slow to respond
 	speaker, err := kefw2.NewSpeaker(ip, kefw2.WithTimeout(10*time.Second))
 	if err != nil {
@@ -99,8 +99,8 @@ func (m *Manager) AddSpeaker(ctx context.Context, ip string) (*kefw2.KEFSpeaker,
 	return speaker, nil
 }
 
-// AddConfiguredSpeaker adds a speaker from config without connecting
-// This is used at startup to preload known speakers before discovery
+// AddConfiguredSpeaker adds a speaker from config without connecting.
+// This is used at startup to preload known speakers before discovery.
 func (m *Manager) AddConfiguredSpeaker(ip, name, model string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -116,7 +116,7 @@ func (m *Manager) AddConfiguredSpeaker(ip, name, model string) {
 	}
 }
 
-// GetSpeakers returns all known speakers
+// GetSpeakers returns all known speakers.
 func (m *Manager) GetSpeakers() []*kefw2.KEFSpeaker {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -128,15 +128,15 @@ func (m *Manager) GetSpeakers() []*kefw2.KEFSpeaker {
 	return speakers
 }
 
-// GetActiveSpeaker returns the currently active speaker
+// GetActiveSpeaker returns the currently active speaker.
 func (m *Manager) GetActiveSpeaker() *kefw2.KEFSpeaker {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.activeSpeaker
 }
 
-// SetActiveSpeaker sets the active speaker by IP address
-func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
+// SetActiveSpeaker sets the active speaker by IP address.
+func (m *Manager) SetActiveSpeaker(_ context.Context, ip string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -146,7 +146,7 @@ func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
 		m.eventCancel = nil
 	}
 	if m.eventClient != nil {
-		m.eventClient.Close()
+		_ = m.eventClient.Close()
 		m.eventClient = nil
 	}
 
@@ -188,10 +188,10 @@ func (m *Manager) SetActiveSpeaker(ctx context.Context, ip string) error {
 }
 
 // listenForEvents forwards speaker events to the callback, with automatic reconnection.
-// When the event client disconnects (speaker offline, network error, etc.), it will:
+// When the event client disconnects (speaker offline, network error, etc.), it will:.
 // 1. Notify via setSpeakerConnected(false)
 // 2. Attempt to reconnect with exponential backoff (2s, 4s, 8s, 16s, max 30s)
-// 3. On successful reconnect, notify via setSpeakerConnected(true) and resume event forwarding
+// 3. On successful reconnect, notify via setSpeakerConnected(true) and resume event forwarding.
 func (m *Manager) listenForEvents(ctx context.Context) {
 	m.mu.RLock()
 	client := m.eventClient
@@ -242,7 +242,7 @@ func (m *Manager) listenForEvents(ctx context.Context) {
 		}
 
 		// Close the old client
-		client.Close()
+		_ = client.Close()
 
 		// Mark speaker as disconnected
 		m.setSpeakerConnected(false)
@@ -265,7 +265,7 @@ func (m *Manager) listenForEvents(ctx context.Context) {
 			)
 			if err != nil {
 				log.Printf("Reconnect failed: %v (retrying in %v)", err, backoff)
-				backoff = backoff * 2
+				backoff *= 2
 				if backoff > maxBackoff {
 					backoff = maxBackoff
 				}
@@ -286,7 +286,7 @@ func (m *Manager) listenForEvents(ctx context.Context) {
 	}
 }
 
-// Close stops the manager and releases resources
+// Close stops the manager and releases resources.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -296,7 +296,7 @@ func (m *Manager) Close() {
 		m.eventCancel = nil
 	}
 	if m.eventClient != nil {
-		m.eventClient.Close()
+		_ = m.eventClient.Close()
 		m.eventClient = nil
 	}
 }

@@ -417,6 +417,9 @@ class APIClient {
 				path?: string;
 				id?: string;
 				type?: string;
+				uri?: string;
+				mimeType?: string;
+				serviceId?: string;
 			}>;
 		}
 	): Promise<{
@@ -766,6 +769,7 @@ export interface BrowseItem {
 	audioType?: string;
 	mediaData?: MediaData; // Required for queue playback of airable content
 	containerPath?: string; // Parent container path for podcast episodes
+	searchQuery?: string; // If set, clicking triggers this search instead of browsing
 }
 
 export const api = new APIClient();

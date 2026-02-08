@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SpeakerConfig matches the kefw2 CLI speaker configuration format
+// SpeakerConfig matches the kefw2 CLI speaker configuration format.
 type SpeakerConfig struct {
 	IPAddress       string `yaml:"ip_address"`
 	Name            string `yaml:"name"`
@@ -37,7 +37,7 @@ type UPnPConfig struct {
 	IndexContainer string `yaml:"index_container,omitempty"`
 }
 
-// Config holds the application configuration (compatible with kefw2 CLI)
+// Config holds the application configuration (compatible with kefw2 CLI).
 type Config struct {
 	mu             sync.RWMutex    `yaml:"-"`
 	DefaultSpeaker string          `yaml:"defaultspeaker,omitempty"`
@@ -45,15 +45,15 @@ type Config struct {
 	UPnP           UPnPConfig      `yaml:"upnp,omitempty"`
 }
 
-// DefaultConfig returns a config with sensible defaults
+// DefaultConfig returns a config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
 		Speakers: []SpeakerConfig{},
 	}
 }
 
-// ConfigDir returns the kefw2 config directory path
-func ConfigDir() (string, error) {
+// Dir returns the kefw2 config directory path.
+func Dir() (string, error) {
 	userConfigDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
@@ -61,32 +61,32 @@ func ConfigDir() (string, error) {
 	return filepath.Join(userConfigDir, "kefw2"), nil
 }
 
-// ConfigPath returns the full path to kefw2.yaml (shared with CLI)
-func ConfigPath() (string, error) {
-	dir, err := ConfigDir()
+// Path returns the full path to kefw2.yaml (shared with CLI).
+func Path() (string, error) {
+	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "kefw2.yaml"), nil
 }
 
-// PlaylistsDir returns the path to the playlists directory
+// PlaylistsDir returns the path to the playlists directory.
 func PlaylistsDir() (string, error) {
-	dir, err := ConfigDir()
+	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "playlists"), nil
 }
 
-// Load reads the config file from disk
+// Load reads the config file from disk.
 func Load() (*Config, error) {
-	path, err := ConfigPath()
+	path, err := Path()
 	if err != nil {
 		return DefaultConfig(), err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is from our own config directory
 	if err != nil {
 		if os.IsNotExist(err) {
 			return DefaultConfig(), nil
@@ -102,18 +102,18 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the config to disk
+// Save writes the config to disk.
 func (c *Config) Save() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	path, err := ConfigPath()
+	path, err := Path()
 	if err != nil {
 		return err
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
 	}
 
@@ -122,17 +122,17 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
-// GetDefaultSpeaker returns the default speaker IP
+// GetDefaultSpeaker returns the default speaker IP.
 func (c *Config) GetDefaultSpeaker() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.DefaultSpeaker
 }
 
-// SetDefaultSpeaker sets the default speaker IP and saves config
+// SetDefaultSpeaker sets the default speaker IP and saves config.
 func (c *Config) SetDefaultSpeaker(ip string) error {
 	c.mu.Lock()
 	c.DefaultSpeaker = ip
@@ -140,7 +140,7 @@ func (c *Config) SetDefaultSpeaker(ip string) error {
 	return c.Save()
 }
 
-// GetSpeakers returns all configured speakers
+// GetSpeakers returns all configured speakers.
 func (c *Config) GetSpeakers() []SpeakerConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -149,7 +149,7 @@ func (c *Config) GetSpeakers() []SpeakerConfig {
 	return result
 }
 
-// FindSpeaker finds a speaker by IP address
+// FindSpeaker finds a speaker by IP address.
 func (c *Config) FindSpeaker(ip string) *SpeakerConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -162,7 +162,7 @@ func (c *Config) FindSpeaker(ip string) *SpeakerConfig {
 	return nil
 }
 
-// AddOrUpdateSpeaker adds a new speaker or updates existing one and saves config
+// AddOrUpdateSpeaker adds a new speaker or updates existing one and saves config.
 func (c *Config) AddOrUpdateSpeaker(spk SpeakerConfig) error {
 	c.mu.Lock()
 
@@ -184,7 +184,7 @@ func (c *Config) AddOrUpdateSpeaker(spk SpeakerConfig) error {
 	return c.Save()
 }
 
-// RemoveSpeaker removes a speaker by IP and saves config
+// RemoveSpeaker removes a speaker by IP and saves config.
 func (c *Config) RemoveSpeaker(ip string) error {
 	c.mu.Lock()
 
@@ -204,14 +204,14 @@ func (c *Config) RemoveSpeaker(ip string) error {
 	return c.Save()
 }
 
-// GetUPnPConfig returns the UPnP configuration
+// GetUPnPConfig returns the UPnP configuration.
 func (c *Config) GetUPnPConfig() UPnPConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.UPnP
 }
 
-// SetUPnPConfig updates the entire UPnP configuration and saves
+// SetUPnPConfig updates the entire UPnP configuration and saves.
 func (c *Config) SetUPnPConfig(upnp UPnPConfig) error {
 	c.mu.Lock()
 	c.UPnP = upnp
@@ -219,7 +219,7 @@ func (c *Config) SetUPnPConfig(upnp UPnPConfig) error {
 	return c.Save()
 }
 
-// SetDefaultServer sets the default UPnP server and saves
+// SetDefaultServer sets the default UPnP server and saves.
 func (c *Config) SetDefaultServer(name, path string) error {
 	c.mu.Lock()
 	c.UPnP.DefaultServer = name
@@ -228,7 +228,7 @@ func (c *Config) SetDefaultServer(name, path string) error {
 	return c.Save()
 }
 
-// SetBrowseContainer sets the browse container path and saves
+// SetBrowseContainer sets the browse container path and saves.
 func (c *Config) SetBrowseContainer(containerPath string) error {
 	c.mu.Lock()
 	c.UPnP.BrowseContainer = containerPath
@@ -236,7 +236,7 @@ func (c *Config) SetBrowseContainer(containerPath string) error {
 	return c.Save()
 }
 
-// SetIndexContainer sets the index container path and saves
+// SetIndexContainer sets the index container path and saves.
 func (c *Config) SetIndexContainer(containerPath string) error {
 	c.mu.Lock()
 	c.UPnP.IndexContainer = containerPath
@@ -244,7 +244,7 @@ func (c *Config) SetIndexContainer(containerPath string) error {
 	return c.Save()
 }
 
-// HasDefaultServer returns true if a default server is configured
+// HasDefaultServer returns true if a default server is configured.
 func (c *Config) HasDefaultServer() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

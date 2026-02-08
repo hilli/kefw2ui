@@ -1,4 +1,4 @@
-// Package playlist manages saved playlists for kefw2ui
+// Package playlist manages saved playlists for kefw2ui.
 package playlist
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/hilli/kefw2ui/config"
 )
 
-// Track represents a single track in a playlist
+// Track represents a single track in a playlist.
 type Track struct {
 	Title     string `json:"title"`
 	Artist    string `json:"artist,omitempty"`
@@ -28,7 +28,7 @@ type Track struct {
 	ServiceID string `json:"serviceId,omitempty"` // Service identifier (e.g., "UPnP", "airableRadios")
 }
 
-// Playlist represents a saved playlist
+// Playlist represents a saved playlist.
 type Playlist struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -38,12 +38,12 @@ type Playlist struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// Manager handles playlist storage and retrieval
+// Manager handles playlist storage and retrieval.
 type Manager struct {
 	dir string
 }
 
-// NewManager creates a new playlist manager
+// NewManager creates a new playlist manager.
 func NewManager() (*Manager, error) {
 	dir, err := config.PlaylistsDir()
 	if err != nil {
@@ -51,14 +51,14 @@ func NewManager() (*Manager, error) {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create playlists directory: %w", err)
 	}
 
 	return &Manager{dir: dir}, nil
 }
 
-// List returns all saved playlists (metadata only, without tracks)
+// List returns all saved playlists (metadata only, without tracks).
 func (m *Manager) List() ([]Playlist, error) {
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
@@ -99,11 +99,11 @@ func (m *Manager) List() ([]Playlist, error) {
 	return playlists, nil
 }
 
-// Get retrieves a playlist by ID (including all tracks)
+// Get retrieves a playlist by ID (including all tracks).
 func (m *Manager) Get(id string) (*Playlist, error) {
 	path := filepath.Join(m.dir, id+".json")
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is constructed from our own playlist directory
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("playlist not found: %s", id)
@@ -119,7 +119,7 @@ func (m *Manager) Get(id string) (*Playlist, error) {
 	return &playlist, nil
 }
 
-// Create creates a new playlist
+// Create creates a new playlist.
 func (m *Manager) Create(name string, description string, tracks []Track) (*Playlist, error) {
 	id := generateID(name)
 
@@ -145,7 +145,7 @@ func (m *Manager) Create(name string, description string, tracks []Track) (*Play
 	return playlist, nil
 }
 
-// Update updates an existing playlist
+// Update updates an existing playlist.
 func (m *Manager) Update(id string, name string, description string, tracks []Track) (*Playlist, error) {
 	playlist, err := m.Get(id)
 	if err != nil {
@@ -168,7 +168,7 @@ func (m *Manager) Update(id string, name string, description string, tracks []Tr
 	return playlist, nil
 }
 
-// Delete removes a playlist
+// Delete removes a playlist.
 func (m *Manager) Delete(id string) error {
 	path := filepath.Join(m.dir, id+".json")
 
@@ -182,7 +182,7 @@ func (m *Manager) Delete(id string) error {
 	return nil
 }
 
-// AddTracks adds tracks to an existing playlist
+// AddTracks adds tracks to an existing playlist.
 func (m *Manager) AddTracks(id string, tracks []Track) (*Playlist, error) {
 	playlist, err := m.Get(id)
 	if err != nil {
@@ -199,7 +199,7 @@ func (m *Manager) AddTracks(id string, tracks []Track) (*Playlist, error) {
 	return playlist, nil
 }
 
-// RemoveTracks removes tracks at specified indices from a playlist
+// RemoveTracks removes tracks at specified indices from a playlist.
 func (m *Manager) RemoveTracks(id string, indices []int) (*Playlist, error) {
 	playlist, err := m.Get(id)
 	if err != nil {
@@ -230,7 +230,7 @@ func (m *Manager) RemoveTracks(id string, indices []int) (*Playlist, error) {
 	return playlist, nil
 }
 
-// save writes a playlist to disk
+// save writes a playlist to disk.
 func (m *Manager) save(playlist *Playlist) error {
 	path := filepath.Join(m.dir, playlist.ID+".json")
 
@@ -239,14 +239,14 @@ func (m *Manager) save(playlist *Playlist) error {
 		return fmt.Errorf("failed to marshal playlist: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write playlist: %w", err)
 	}
 
 	return nil
 }
 
-// generateID creates a URL-safe ID from a playlist name
+// generateID creates a URL-safe ID from a playlist name.
 func generateID(name string) string {
 	// Convert to lowercase and replace spaces with hyphens
 	id := strings.ToLower(name)
@@ -275,7 +275,7 @@ func generateID(name string) string {
 	return id
 }
 
-// TrackCount returns the number of tracks in a playlist without loading them all
+// TrackCount returns the number of tracks in a playlist without loading them all.
 func (m *Manager) TrackCount(id string) (int, error) {
 	playlist, err := m.Get(id)
 	if err != nil {

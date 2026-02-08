@@ -42,6 +42,10 @@
 	let playingPath = $state<string | null>(null);
 	let queueingPath = $state<string | null>(null);
 	let favoritingPath = $state<string | null>(null);
+	let draggingPath = $state<string | null>(null);
+
+	// Custom MIME type for cross-panel drag-and-drop
+	const DRAG_MIME = 'application/x-kefw2-browse-item';
 
 	// Navigation breadcrumbs
 	let breadcrumbs = $state<BreadcrumbItem[]>([]);
@@ -156,6 +160,12 @@
 	}
 
 	async function navigateToItem(item: BrowseItem) {
+		if (item.searchQuery) {
+			// Synthetic item (e.g. album header) — trigger a search instead of browsing
+			searchQuery = item.searchQuery;
+			searchContent(item.searchQuery);
+			return;
+		}
 		if (item.type === 'container' || (item.type !== 'audio' && !item.playable)) {
 			// Navigate into container
 			breadcrumbs = [...breadcrumbs, { title: item.title, path: item.path }];
@@ -177,6 +187,54 @@
 	}
 
 	async function playItem(item: BrowseItem) {
+		// For album headers with searchQuery, resolve to tracks and play the first one
+		if (item.searchQuery) {
+			try {
+				playingPath = item.path;
+				const result = await api.browseUPnP(undefined, { query: item.searchQuery });
+				const tracks = (result.items || []).filter(
+					(t) => t.type === 'audio' || t.playable
+				);
+				if (tracks.length === 0) {
+					toasts.error('No tracks found');
+					return;
+				}
+				// Play the first track
+				await api.playBrowseItem({
+					path: tracks[0].path,
+					source: activeSource,
+					type: tracks[0].type,
+					audioType: tracks[0].audioType,
+					title: tracks[0].title,
+					icon: tracks[0].icon,
+					id: tracks[0].id,
+					containerPath: tracks[0].containerPath
+				});
+				// Queue the rest
+				for (let i = 1; i < tracks.length; i++) {
+					await api.addBrowseItemToQueue({
+						path: tracks[i].path,
+						source: activeSource,
+						type: tracks[i].type,
+						title: tracks[i].title,
+						icon: tracks[i].icon,
+						artist: tracks[i].artist,
+						audioType: tracks[i].audioType,
+						mediaData: tracks[i].mediaData
+					});
+				}
+				if (tracks.length > 1) {
+					queueRefresh.refresh();
+				}
+			} catch (e) {
+				toasts.error('Failed to play');
+			} finally {
+				setTimeout(() => {
+					playingPath = null;
+				}, 1000);
+			}
+			return;
+		}
 		try {
 			playingPath = item.path;
 			await api.playBrowseItem({
@@ -199,6 +257,41 @@
 	}
 
 	async function addToQueue(item: BrowseItem) {
+		// For album headers with searchQuery, resolve to tracks and queue them all
+		if (item.searchQuery) {
+			try {
+				queueingPath = item.path;
+				const result = await api.browseUPnP(undefined, { query: item.searchQuery });
+				const tracks = (result.items || []).filter(
+					(t) => t.type === 'audio' || t.playable
+				);
+				if (tracks.length === 0) {
+					toasts.error('No tracks found');
+					return;
+				}
+				for (const track of tracks) {
+					await api.addBrowseItemToQueue({
+						path: track.path,
+						source: activeSource,
+						type: track.type,
+						title: track.title,
+						icon: track.icon,
+						artist: track.artist,
+						audioType: track.audioType,
+						mediaData: track.mediaData
+					});
+				}
+				queueRefresh.refresh();
+				toasts.success(`Added ${tracks.length} tracks to queue`);
+			} catch (e) {
+				toasts.error('Failed to add to queue');
+			} finally {
+				setTimeout(() => {
+					queueingPath = null;
+				}, 1000);
+			}
+			return;
+		}
 		try {
 			queueingPath = item.path;
 			await api.addBrowseItemToQueue({
@@ -239,6 +332,36 @@
 				favoritingPath = null;
 			}, 1000);
 		}
+	}
+
+	// Drag handlers for cross-panel drag-and-drop to Queue
+	function handleBrowseDragStart(event: DragEvent, item: BrowseItem) {
+		if (!event.dataTransfer) return;
+		draggingPath = item.path;
+		event.dataTransfer.effectAllowed = 'copyMove';
+		// Serialize the browse item + source for the Queue to consume
+		const dragData = JSON.stringify({
+			path: item.path,
+			source: activeSource,
+			type: item.type,
+			title: item.title,
+			icon: item.icon,
+			artist: item.artist,
+			album: item.album,
+			audioType: item.audioType,
+			mediaData: item.mediaData
+		});
+		event.dataTransfer.setData(DRAG_MIME, dragData);
+		event.dataTransfer.setData('text/plain', item.title);
+	}
+
+	function handleBrowseDragEnd() {
+		draggingPath = null;
+	}
+
+	function isItemDraggable(item: BrowseItem): boolean {
+		if (item.searchQuery) return true; // Album headers are draggable
+		return (item.playable || item.type === 'audio') && item.audioType !== 'audioBroadcast';
 	}
 
 	function formatDuration(ms?: number): string {
@@ -417,8 +540,15 @@
 			{:else}
 				{#each items as item (item.path)}
 					{@const ItemIcon = getItemIcon(item)}
+					{@const canDrag = isItemDraggable(item)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="group flex items-center gap-3 px-3 py-2 transition-colors hover:bg-zinc-800/50"
+						class:opacity-50={draggingPath === item.path}
+						class:cursor-grab={canDrag}
+						draggable={canDrag}
+						ondragstart={(e) => canDrag && handleBrowseDragStart(e, item)}
+						ondragend={handleBrowseDragEnd}
 					>
 						<!-- Click to navigate or play -->
 						<!-- Using div instead of button to allow nested interactive elements for artist/album links -->
@@ -519,7 +649,7 @@
 									{/if}
 								</button>
 							{/if}
-							{#if item.playable || item.type === 'audio'}
+							{#if item.playable || item.type === 'audio' || item.searchQuery}
 								<!-- Add to Queue button - not for radio streams (they don't end) -->
 								{#if item.audioType !== 'audioBroadcast'}
 									<button
@@ -529,7 +659,7 @@
 											addToQueue(item);
 										}}
 										disabled={queueingPath === item.path}
-										title="Add to Queue"
+										title={item.searchQuery ? 'Add All to Queue' : 'Add to Queue'}
 									>
 										{#if queueingPath === item.path}
 											<Loader2 class="h-4 w-4 animate-spin" />
@@ -546,7 +676,7 @@
 										playItem(item);
 									}}
 									disabled={playingPath === item.path}
-									title="Play Now"
+									title={item.searchQuery ? 'Play All' : 'Play Now'}
 								>
 									{#if playingPath === item.path}
 										<Loader2 class="h-4 w-4 animate-spin" />
@@ -555,7 +685,7 @@
 									{/if}
 								</button>
 							{/if}
-							{#if item.type === 'container'}
+							{#if item.type === 'container' && !item.searchQuery}
 								<ChevronRight class="h-4 w-4 text-zinc-600" />
 							{/if}
 						</div>

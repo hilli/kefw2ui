@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -21,7 +22,7 @@ import (
 //go:embed all:frontend/build
 var frontendFS embed.FS
 
-// Set via ldflags at build time
+// Set via ldflags at build time.
 var (
 	version = "dev"
 	commit  = "none"
@@ -41,6 +42,7 @@ func envBool(key string) bool {
 	return v == "1" || v == "true" || v == "yes"
 }
 
+//nolint:gocyclo // main orchestrates startup/shutdown; splitting would obscure the flow.
 func main() {
 	var (
 		bind        string
@@ -156,29 +158,50 @@ func main() {
 
 		go func() {
 			log.Printf("Tailscale HTTPS listener active on %s:443", tsHostname)
-			if err := http.Serve(ln, srv.Handler()); err != nil {
+			if err := http.Serve(ln, srv.Handler()); err != nil { //nolint:gosec // local Tailscale listener, timeouts not needed
 				log.Fatalf("Tailscale serve error: %v", err)
 			}
 		}()
 	}
 
-	// Graceful shutdown
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		log.Println("Shutting down...")
-		speakerMgr.Close()
-		if tsServer != nil {
-			tsServer.Close()
-		}
-		os.Exit(0)
-	}()
+	// Graceful shutdown: wait for signal, then drain connections.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	addr := fmt.Sprintf("%s:%d", bind, port)
 	log.Printf("Starting kefw2ui %s on http://%s", version, addr)
 
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Server error: %v", err)
+	// Run the HTTP server in a goroutine so the main goroutine can wait for signals.
+	srvErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			srvErr <- err
+		}
+		close(srvErr)
+	}()
+
+	// Block until we get a signal or the server fails to start.
+	select {
+	case err := <-srvErr:
+		if err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
+	case sig := <-sigCh:
+		log.Printf("Received %v, shutting down...", sig)
 	}
+
+	// Give in-flight requests up to 5 seconds to finish.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	if tsServer != nil {
+		_ = tsServer.Close()
+	}
+
+	speakerMgr.Close()
+	log.Println("Shutdown complete")
 }

@@ -46,6 +46,10 @@
 	// Multi-select state
 	let selectedIndices = $state<Set<number>>(new Set());
 	let selectMode = $state(false);
+
+	// External drag-and-drop state
+	const DRAG_MIME = 'application/x-kefw2-browse-item';
+	let externalDragOver = $state(false);
 	
 	// Derived state for select all
 	let allSelected = $derived(tracks.length > 0 && selectedIndices.size === tracks.length);
@@ -243,11 +247,28 @@
 	}
 
 	// Drag and drop handlers
+	const QUEUE_INDEX_MIME = 'text/x-queue-index';
+
 	function handleDragStart(event: DragEvent, index: number) {
 		if (!event.dataTransfer) return;
 		draggedIndex = index;
-		event.dataTransfer.effectAllowed = 'move';
+		event.dataTransfer.effectAllowed = 'copyMove';
 		event.dataTransfer.setData('text/plain', index.toString());
+		// Set queue-specific MIME so we can distinguish internal reorder from external drops
+		event.dataTransfer.setData(QUEUE_INDEX_MIME, index.toString());
+
+		// Also set the cross-panel MIME type so this track can be dropped on Playlists
+		const track = tracks[index];
+		const dragData = JSON.stringify({
+			path: track.path || '',
+			source: 'queue',
+			type: track.type || 'audio',
+			title: track.title,
+			icon: track.icon,
+			artist: track.artist,
+			album: track.album
+		});
+		event.dataTransfer.setData(DRAG_MIME, dragData);
 		
 		// Add a slight delay to allow the drag image to be set
 		requestAnimationFrame(() => {
@@ -261,61 +282,186 @@
 		target.classList.remove('opacity-50');
 		draggedIndex = null;
 		dropTargetIndex = null;
+		externalDragOver = false;
 	}
 
 	function handleDragOver(event: DragEvent, index: number) {
 		event.preventDefault();
 		if (!event.dataTransfer) return;
+
+		// Check if this is a queue-internal reorder (has queue index MIME)
+		if (event.dataTransfer.types.includes(QUEUE_INDEX_MIME)) {
+			event.dataTransfer.dropEffect = 'move';
+			if (draggedIndex !== null && draggedIndex !== index) {
+				dropTargetIndex = index;
+			}
+			return;
+		}
+
+		// Check if this is an external drop (from Browser or Playlists)
+		if (event.dataTransfer.types.includes(DRAG_MIME)) {
+			event.dataTransfer.dropEffect = 'copy';
+			externalDragOver = true;
+			dropTargetIndex = index;
+			return;
+		}
+
+		// Fallback: internal reorder
 		event.dataTransfer.dropEffect = 'move';
-		
 		if (draggedIndex !== null && draggedIndex !== index) {
 			dropTargetIndex = index;
 		}
 	}
 
-	function handleDragLeave() {
+	function handleDragLeave(event: DragEvent) {
+		// Only clear if actually leaving the queue panel (not moving between children)
+		const relatedTarget = event.relatedTarget as HTMLElement | null;
+		const currentTarget = event.currentTarget as HTMLElement;
+		if (relatedTarget && currentTarget.contains(relatedTarget)) return;
 		dropTargetIndex = null;
+		externalDragOver = false;
 	}
 
 	async function handleDrop(event: DragEvent, toIndex: number) {
 		event.preventDefault();
 		dropTargetIndex = null;
-		
+		externalDragOver = false;
+
+		// Check for queue-internal reorder first (has queue index MIME)
+		const queueIndexData = event.dataTransfer?.getData(QUEUE_INDEX_MIME);
+		if (queueIndexData !== undefined && queueIndexData !== '') {
+			// Internal reorder
+			if (draggedIndex === null || draggedIndex === toIndex) {
+				draggedIndex = null;
+				return;
+			}
+
+			const fromIndex = draggedIndex;
+			draggedIndex = null;
+
+			try {
+				actionLoading = 'move';
+				
+				// Optimistic UI update
+				const newTracks = [...tracks];
+				const [movedTrack] = newTracks.splice(fromIndex, 1);
+				newTracks.splice(toIndex, 0, movedTrack);
+				tracks = newTracks;
+				
+				// Update current index if needed
+				if (currentIndex === fromIndex) {
+					currentIndex = toIndex;
+				} else if (fromIndex < currentIndex && toIndex >= currentIndex) {
+					currentIndex--;
+				} else if (fromIndex > currentIndex && toIndex <= currentIndex) {
+					currentIndex++;
+				}
+				
+				// Call API
+				await api.moveQueueItem(fromIndex, toIndex);
+				
+				// Reload to ensure sync
+				await loadQueue();
+			} catch (e) {
+				toasts.error('Failed to move track');
+				// Reload queue on error to restore correct state
+				await loadQueue();
+			} finally {
+				actionLoading = null;
+			}
+			return;
+		}
+
+		// Check for external drop (from Browser or Playlists)
+		const mimeData = event.dataTransfer?.getData(DRAG_MIME);
+		if (mimeData) {
+			// Stop propagation so the panel-level handlePanelDrop doesn't also fire
+			event.stopPropagation();
+			try {
+				const item = JSON.parse(mimeData);
+				actionLoading = 'addExternal';
+				const oldLength = tracks.length;
+				const result = await api.addBrowseItemToQueue({
+					path: item.path,
+					source: item.source,
+					type: item.type,
+					title: item.title,
+					icon: item.icon,
+					artist: item.artist,
+					album: item.album,
+					audioType: item.audioType,
+					mediaData: item.mediaData
+				});
+				const count = result.tracksAdded ?? 1;
+				// If a single track was added and the drop position is not the end,
+				// move the newly appended track to the desired position
+				if (count === 1 && toIndex < oldLength) {
+					await api.moveQueueItem(oldLength, toIndex);
+				}
+				queueRefresh.refresh();
+				toasts.success(`Added ${count} track${count !== 1 ? 's' : ''} to queue`);
+			} catch (e) {
+				toasts.error('Failed to add to queue');
+			} finally {
+				actionLoading = null;
+			}
+			return;
+		}
+
+		// Fallback: internal reorder (shouldn't reach here normally)
 		if (draggedIndex === null || draggedIndex === toIndex) {
 			draggedIndex = null;
 			return;
 		}
+	}
 
-		const fromIndex = draggedIndex;
-		draggedIndex = null;
+	// Container-level handlers for external drag over the whole queue panel
+	function handlePanelDragOver(event: DragEvent) {
+		if (!event.dataTransfer) return;
+		// Ignore queue-internal drags
+		if (event.dataTransfer.types.includes(QUEUE_INDEX_MIME)) return;
+		if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+		event.preventDefault();
+		event.dataTransfer.dropEffect = 'copy';
+		externalDragOver = true;
+	}
+
+	function handlePanelDragLeave(event: DragEvent) {
+		const relatedTarget = event.relatedTarget as HTMLElement | null;
+		const currentTarget = event.currentTarget as HTMLElement;
+		if (relatedTarget && currentTarget.contains(relatedTarget)) return;
+		externalDragOver = false;
+		dropTargetIndex = null;
+	}
+
+	async function handlePanelDrop(event: DragEvent) {
+		// Ignore queue-internal drags
+		if (event.dataTransfer?.types.includes(QUEUE_INDEX_MIME)) return;
+		const mimeData = event.dataTransfer?.getData(DRAG_MIME);
+		if (!mimeData) return;
+		event.preventDefault();
+		externalDragOver = false;
+		dropTargetIndex = null;
 
 		try {
-			actionLoading = 'move';
-			
-			// Optimistic UI update
-			const newTracks = [...tracks];
-			const [movedTrack] = newTracks.splice(fromIndex, 1);
-			newTracks.splice(toIndex, 0, movedTrack);
-			tracks = newTracks;
-			
-			// Update current index if needed
-			if (currentIndex === fromIndex) {
-				currentIndex = toIndex;
-			} else if (fromIndex < currentIndex && toIndex >= currentIndex) {
-				currentIndex--;
-			} else if (fromIndex > currentIndex && toIndex <= currentIndex) {
-				currentIndex++;
-			}
-			
-			// Call API
-			await api.moveQueueItem(fromIndex, toIndex);
-			
-			// Reload to ensure sync
-			await loadQueue();
+			const item = JSON.parse(mimeData);
+			actionLoading = 'addExternal';
+			const result = await api.addBrowseItemToQueue({
+				path: item.path,
+				source: item.source,
+				type: item.type,
+				title: item.title,
+				icon: item.icon,
+				artist: item.artist,
+				album: item.album,
+				audioType: item.audioType,
+				mediaData: item.mediaData
+			});
+			queueRefresh.refresh();
+			const count = result.tracksAdded ?? 1;
+			toasts.success(`Added ${count} track${count !== 1 ? 's' : ''} to queue`);
 		} catch (e) {
-			toasts.error('Failed to move track');
-			// Reload queue on error to restore correct state
-			await loadQueue();
+			toasts.error('Failed to add to queue');
 		} finally {
 			actionLoading = null;
 		}
@@ -348,7 +494,14 @@
 	});
 </script>
 
-<div class="flex flex-col rounded-lg border border-zinc-800 bg-zinc-900/50" class:h-full={fullHeight}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="flex flex-col rounded-lg border bg-zinc-900/50 transition-all {externalDragOver ? 'border-green-500 ring-2 ring-green-500/50' : 'border-zinc-800'}"
+	class:h-full={fullHeight}
+	ondragover={handlePanelDragOver}
+	ondragleave={handlePanelDragLeave}
+	ondrop={handlePanelDrop}
+>
 	<!-- Header -->
 	<div class="flex flex-shrink-0 items-center justify-between border-b border-zinc-800">
 		<button
@@ -500,6 +653,8 @@
 				<div class="px-4 py-6 text-center text-sm text-zinc-500">
 					{#if loading}
 						Loading queue...
+					{:else if externalDragOver}
+						<span class="text-green-400">Drop here to add to queue</span>
 					{:else}
 						No tracks in queue
 					{/if}
@@ -511,7 +666,7 @@
 							data-queue-index={i}
 							class="group flex items-center gap-2 px-2 py-2 transition-colors hover:bg-zinc-800/50"
 							class:bg-zinc-800={i === currentIndex || selectedIndices.has(i)}
-							class:border-t-2={dropTargetIndex === i && draggedIndex !== null && draggedIndex > i}
+							class:border-t-2={dropTargetIndex === i && (externalDragOver || (draggedIndex !== null && draggedIndex > i))}
 							class:border-b-2={dropTargetIndex === i && draggedIndex !== null && draggedIndex < i}
 							class:border-green-500={dropTargetIndex === i}
 							class:ring-1={selectedIndices.has(i)}
