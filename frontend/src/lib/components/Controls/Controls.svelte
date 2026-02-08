@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { player, connectionStatus } from '$lib/stores/player';
+	import { playModeRefresh } from '$lib/stores/queue';
 	import { api } from '$lib/api/client';
+	import { onMount, onDestroy } from 'svelte';
 	import { cn } from '$lib/utils/cn';
 	import { toasts } from '$lib/stores/toast';
 	import {
@@ -12,7 +14,6 @@
 		Volume2,
 		VolumeX,
 		Volume1,
-		Power,
 		Shuffle,
 		Repeat,
 		Repeat1
@@ -29,7 +30,6 @@
 	// Local state for volume control
 	let volumeChanging = $state(false);
 	let volumeValue = $state($player.volume);
-	let isPowerChanging = $state(false);
 
 	// Play mode state
 	let shuffle = $state(false);
@@ -43,9 +43,16 @@
 		}
 	});
 
-	// Load play mode on mount
-	$effect(() => {
+	// Load play mode on mount and when speaker signals a change via SSE
+	let unsubscribePlayMode: (() => void) | null = null;
+	onMount(() => {
 		loadPlayMode();
+		unsubscribePlayMode = playModeRefresh.subscribe(() => {
+			loadPlayMode();
+		});
+	});
+	onDestroy(() => {
+		unsubscribePlayMode?.();
 	});
 
 	async function loadPlayMode() {
@@ -109,18 +116,6 @@
 			await api.toggleMute();
 		} catch (error) {
 			toasts.error('Mute toggle failed');
-		}
-	}
-
-	async function handlePowerToggle() {
-		if (isPowerChanging) return;
-		isPowerChanging = true;
-		try {
-			await api.togglePower();
-		} catch (error) {
-			toasts.error('Power toggle failed');
-		} finally {
-			isPowerChanging = false;
 		}
 	}
 
@@ -310,24 +305,5 @@
 		</span>
 	</div>
 
-	<!-- Source Indicator and Power Button -->
-	<div class="flex items-center justify-center gap-4 text-sm text-zinc-500">
-		<span class="capitalize">{$player.source === 'standby' ? 'Standby' : $player.source}</span>
-		<button
-			onclick={handlePowerToggle}
-			disabled={isDisconnected || isPowerChanging}
-			class={cn(
-				'rounded-full p-2 transition-colors',
-				$player.poweredOn
-					? 'text-green-500 hover:bg-zinc-800 hover:text-green-400'
-					: 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
-				'focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900',
-				'disabled:cursor-not-allowed disabled:opacity-50'
-			)}
-			aria-label={$player.poweredOn ? 'Turn off speaker (standby)' : 'Turn on speaker'}
-			title={$player.poweredOn ? 'Turn off speaker (standby)' : 'Turn on speaker'}
-		>
-			<Power class={cn('h-5 w-5', isPowerChanging && 'animate-pulse')} />
-		</button>
-	</div>
+
 </div>

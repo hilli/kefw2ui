@@ -9,7 +9,7 @@ import {
 	updateSpeakerHealth
 } from '$lib/stores/player';
 import { activeSpeaker, updateSpeakers } from '$lib/stores/speakers';
-import { queueRefresh } from '$lib/stores/queue';
+import { queueRefresh, playModeRefresh } from '$lib/stores/queue';
 import { api } from '$lib/api/client';
 
 let eventSource: EventSource | null = null;
@@ -235,8 +235,9 @@ export async function refreshFullState() {
 			);
 		}
 
-		// Trigger queue refresh
+		// Trigger queue and play mode refresh
 		queueRefresh.refresh();
+		playModeRefresh.refresh();
 	} catch (e) {
 		console.error('Failed to refresh state after reconnect:', e);
 	}
@@ -264,6 +265,8 @@ function handleEvent(message: { type: string; data: unknown }) {
 					live?: boolean;
 				}
 			);
+			// Track changed — refresh queue so currentIndex updates
+			queueRefresh.refresh();
 			break;
 		case 'source': {
 			const source = (message.data as { source: string }).source;
@@ -286,11 +289,18 @@ function handleEvent(message: { type: string; data: unknown }) {
 				model: data.model,
 				active: true
 			});
+			// Speaker became active — refresh everything (handles startup race
+			// where initial API calls returned 503 before discovery completed)
+			refreshFullState();
 			break;
 		}
 		case 'queue':
 			// Queue changed, trigger a refresh
 			queueRefresh.refresh();
+			break;
+		case 'playMode':
+			// Play mode changed on the speaker, trigger a refresh
+			playModeRefresh.refresh();
 			break;
 		case 'speakerHealth':
 			updateSpeakerHealth((message.data as { connected: boolean }).connected);

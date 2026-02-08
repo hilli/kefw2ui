@@ -13,3 +13,15 @@ function createQueueRefreshStore() {
 }
 
 export const queueRefresh = createQueueRefreshStore();
+
+// Trigger for play mode refreshes (speaker notifies us via SSE)
+function createPlayModeRefreshStore() {
+	const { subscribe, update } = writable(0);
+
+	return {
+		subscribe,
+		refresh: () => update(n => n + 1)
+	};
+}
+
+export const playModeRefresh = createPlayModeRefreshStore();

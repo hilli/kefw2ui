@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { player } from '$lib/stores/player';
-	import { queueRefresh } from '$lib/stores/queue';
+	import { queueRefresh, playModeRefresh } from '$lib/stores/queue';
 	import { toasts } from '$lib/stores/toast';
 	import { Music, Play, Loader2, X, Trash2, Shuffle, Repeat, Repeat1, GripVertical, Save, CheckSquare, Square, MinusSquare } from 'lucide-svelte';
 	import { browseNavigation } from '$lib/stores/browseNavigation';
@@ -46,23 +46,41 @@
 	let allSelected = $derived(tracks.length > 0 && selectedIndices.size === tracks.length);
 	let someSelected = $derived(selectedIndices.size > 0 && selectedIndices.size < tracks.length);
 
+	// Scroll container ref for auto-scrolling to current track
+	let scrollContainer = $state<HTMLDivElement | null>(null);
+
+	// Auto-scroll to center the currently playing track when currentIndex changes
+	$effect(() => {
+		const idx = currentIndex;
+		if (idx < 0 || !scrollContainer) return;
+		tick().then(() => {
+			const el = scrollContainer?.querySelector(`[data-queue-index="${idx}"]`);
+			el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		});
+	});
+
 	async function loadQueue() {
 		try {
 			loading = true;
 			error = null;
-			const [queueResponse, modeResponse] = await Promise.all([
-				api.getQueue(),
-				api.getPlayMode().catch(() => ({ mode: 'normal', shuffle: false, repeat: 'off' as const }))
-			]);
+			const queueResponse = await api.getQueue();
 			tracks = queueResponse.tracks || [];
 			currentIndex = queueResponse.currentIndex ?? -1;
-			shuffle = modeResponse.shuffle;
-			repeat = modeResponse.repeat;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load queue';
 			tracks = [];
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadPlayMode() {
+		try {
+			const modeResponse = await api.getPlayMode();
+			shuffle = modeResponse.shuffle;
+			repeat = modeResponse.repeat;
+		} catch (e) {
+			console.error('Failed to load play mode:', e);
 		}
 	}
 
@@ -292,25 +310,27 @@
 
 	onMount(() => {
 		loadQueue();
-		
-		// Refresh queue periodically
-		const interval = setInterval(loadQueue, 30000);
+		loadPlayMode();
 		
 		// Subscribe to player changes
 		const unsubscribePlayer = player.subscribe(() => {
 			// Queue updates come via SSE, just update currentIndex based on title match
 		});
 		
-		// Subscribe to manual refresh triggers (e.g., when Browser adds to queue)
+		// Subscribe to queue refresh triggers (SSE queue events or manual triggers like Browser adding to queue)
 		const unsubscribeRefresh = queueRefresh.subscribe(() => {
-			// Skip initial subscription call, only refresh on subsequent triggers
 			loadQueue();
 		});
 
+		// Subscribe to play mode refresh triggers (SSE playMode events)
+		const unsubscribePlayMode = playModeRefresh.subscribe(() => {
+			loadPlayMode();
+		});
+
 		return () => {
-			clearInterval(interval);
 			unsubscribePlayer();
 			unsubscribeRefresh();
+			unsubscribePlayMode();
 		};
 	});
 </script>
@@ -472,9 +492,10 @@
 					{/if}
 				</div>
 			{:else}
-				<div class="h-full overflow-y-auto" class:max-h-64={!fullHeight}>
+				<div class="h-full overflow-y-auto" class:max-h-64={!fullHeight} bind:this={scrollContainer}>
 					{#each tracks as track, i (track.id || i)}
 						<div
+							data-queue-index={i}
 							class="group flex items-center gap-2 px-2 py-2 transition-colors hover:bg-zinc-800/50"
 							class:bg-zinc-800={i === currentIndex || selectedIndices.has(i)}
 							class:border-t-2={dropTargetIndex === i && draggedIndex !== null && draggedIndex > i}

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1186,14 +1187,16 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 
 	// Get current player data to identify current track
 	playerData, playerErr := spk.PlayerData(ctx)
-	currentTitle := ""
-	if playerErr == nil {
-		currentTitle = playerData.TrackRoles.Title
+	currentIndex := -1
+	if playerErr == nil && playerData.TrackRoles.ID != "" {
+		// TrackRoles.ID is the 1-based queue index when playing from queue
+		if idx, err := strconv.Atoi(playerData.TrackRoles.ID); err == nil && idx > 0 {
+			currentIndex = idx - 1
+		}
 	}
 
 	// Convert to simplified track list
 	tracks := make([]map[string]any, 0, len(queueResp.Rows))
-	currentIndex := -1
 	for i, item := range queueResp.Rows {
 		track := map[string]any{
 			"index":    i,
@@ -1213,11 +1216,6 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 			if len(item.MediaData.Resources) > 0 {
 				track["duration"] = item.MediaData.Resources[0].Duration
 			}
-		}
-
-		// Try to match current track
-		if currentTitle != "" && item.Title == currentTitle {
-			currentIndex = i
 		}
 
 		tracks = append(tracks, track)

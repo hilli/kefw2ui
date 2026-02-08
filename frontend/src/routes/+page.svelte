@@ -34,18 +34,16 @@
 <div class="flex h-screen flex-col bg-zinc-900">
 	<!-- Header -->
 	<header class="flex flex-shrink-0 items-center justify-between border-b border-zinc-800 px-4 py-3">
-		<div class="flex items-center gap-4">
-			<!-- KEF Logo - proxied from speaker -->
-			{#if $activeSpeaker}
-				<img
-					src="/api/speaker/logo"
-					alt="KEF"
-					class="h-6 w-auto opacity-80 invert"
-					onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
-				/>
-			{/if}
-			<SpeakerSwitcher />
-		</div>
+		<SpeakerSwitcher />
+		<!-- KEF Logo - proxied from speaker -->
+		{#if $activeSpeaker}
+			<img
+				src="/api/speaker/logo"
+				alt="KEF"
+				class="h-6 w-auto opacity-80 invert"
+				onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+			/>
+		{/if}
 		<div class="flex items-center gap-3">
 			<SourceSelector />
 			<ConnectionStatus />
@@ -99,8 +97,8 @@
 			<PaneGroup direction="horizontal" autoSaveId="kefw2ui-main-layout" class="h-full">
 				<!-- Main Area (NowPlaying + Controls) -->
 				<Pane defaultSize={65} minSize={40} class="h-full">
-					<div class="flex h-full items-center justify-center overflow-y-auto p-4">
-						<div class="w-full max-w-lg">
+				<div class="flex h-full flex-col overflow-y-auto p-4">
+					<div class="m-auto w-full max-w-lg">
 							<NowPlaying />
 							<Controls />
 						</div>
