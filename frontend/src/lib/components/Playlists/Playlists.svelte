@@ -5,13 +5,13 @@
 	import {
 		ListMusic,
 		Play,
-		Plus,
 		Trash2,
 		Loader2,
 		ChevronRight,
 		ChevronLeft,
-		Save,
-		Music
+		Music,
+		GripVertical,
+		ListPlus
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -55,9 +55,10 @@
 	let error = $state<string | null>(null);
 	let collapsed = $state(false);
 	let actionLoading = $state<string | null>(null);
-	let showSaveDialog = $state(false);
-	let newPlaylistName = $state('');
-	let newPlaylistDescription = $state('');
+
+	// Drag and drop state for playlist detail view
+	let draggedIndex = $state<number | null>(null);
+	let dropTargetIndex = $state<number | null>(null);
 
 	async function loadPlaylists() {
 		try {
@@ -87,9 +88,14 @@
 
 	async function loadPlaylistToQueue(id: string, append = false) {
 		try {
-			actionLoading = `load-${id}`;
-			await api.loadPlaylist(id, append);
-			// Could show success message
+			actionLoading = append ? `append-${id}` : `load-${id}`;
+			const result = await api.loadPlaylist(id, append);
+			const count = result.trackCount ?? 0;
+			if (append) {
+				toasts.success(`Appended ${count} track${count !== 1 ? 's' : ''} to queue`);
+			} else {
+				toasts.success(`Loaded ${count} track${count !== 1 ? 's' : ''} to queue`);
+			}
 		} catch (e) {
 			toasts.error('Failed to load playlist');
 		} finally {
@@ -115,18 +121,69 @@
 		}
 	}
 
-	async function saveQueueAsPlaylist() {
-		if (!newPlaylistName.trim()) return;
+	// Drag and drop handlers for playlist track reordering
+	function handleDragStart(event: DragEvent, index: number) {
+		if (!event.dataTransfer) return;
+		draggedIndex = index;
+		event.dataTransfer.effectAllowed = 'move';
+		event.dataTransfer.setData('text/plain', index.toString());
+
+		requestAnimationFrame(() => {
+			const target = event.target as HTMLElement;
+			target.classList.add('opacity-50');
+		});
+	}
+
+	function handleDragEnd(event: DragEvent) {
+		const target = event.target as HTMLElement;
+		target.classList.remove('opacity-50');
+		draggedIndex = null;
+		dropTargetIndex = null;
+	}
+
+	function handleDragOver(event: DragEvent, index: number) {
+		event.preventDefault();
+		if (!event.dataTransfer) return;
+		event.dataTransfer.dropEffect = 'move';
+
+		if (draggedIndex !== null && draggedIndex !== index) {
+			dropTargetIndex = index;
+		}
+	}
+
+	function handleDragLeave() {
+		dropTargetIndex = null;
+	}
+
+	async function handleDrop(event: DragEvent, toIndex: number) {
+		event.preventDefault();
+		dropTargetIndex = null;
+
+		if (!selectedPlaylist || draggedIndex === null || draggedIndex === toIndex) {
+			draggedIndex = null;
+			return;
+		}
+
+		const fromIndex = draggedIndex;
+		draggedIndex = null;
 
 		try {
-			actionLoading = 'save';
-			await api.saveQueueAsPlaylist(newPlaylistName.trim(), newPlaylistDescription.trim());
-			showSaveDialog = false;
-			newPlaylistName = '';
-			newPlaylistDescription = '';
-			await loadPlaylists();
+			actionLoading = 'reorder';
+
+			// Optimistic UI update
+			const newTracks = [...selectedPlaylist.tracks];
+			const [movedTrack] = newTracks.splice(fromIndex, 1);
+			newTracks.splice(toIndex, 0, movedTrack);
+			selectedPlaylist = { ...selectedPlaylist, tracks: newTracks };
+
+			// Persist to backend
+			await api.updatePlaylist(selectedPlaylist.id, { tracks: newTracks });
 		} catch (e) {
-			toasts.error('Failed to save playlist');
+			toasts.error('Failed to reorder tracks');
+			// Re-fetch to restore correct state
+			if (selectedPlaylist) {
+				await selectPlaylist(selectedPlaylist.id);
+			}
 		} finally {
 			actionLoading = null;
 		}
@@ -170,18 +227,6 @@
 				<Loader2 class="h-4 w-4 animate-spin text-zinc-500" />
 			{/if}
 		</button>
-
-		<!-- Save queue button -->
-		{#if !collapsed}
-			<button
-				class="mr-2 flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
-				onclick={() => (showSaveDialog = true)}
-				title="Save current queue as playlist"
-			>
-				<Save class="h-3.5 w-3.5" />
-				<span>Save Queue</span>
-			</button>
-		{/if}
 
 		<button
 			class="px-3 py-3 text-zinc-500 transition-transform hover:bg-zinc-800/50"
@@ -233,15 +278,22 @@
 
 								<!-- Actions -->
 								<div class="flex items-center gap-1">
-									{#if actionLoading === `load-${pl.id}`}
+									{#if actionLoading === `load-${pl.id}` || actionLoading === `append-${pl.id}`}
 										<Loader2 class="h-4 w-4 animate-spin text-zinc-400" />
 									{:else}
 										<button
 											class="hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-green-400 group-hover:block"
 											onclick={() => loadPlaylistToQueue(pl.id)}
-											title="Play playlist"
+											title="Play playlist (replace queue)"
 										>
 											<Play class="h-4 w-4" />
+										</button>
+										<button
+											class="hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-blue-400 group-hover:block"
+											onclick={() => loadPlaylistToQueue(pl.id, true)}
+											title="Append to queue"
+										>
+											<ListPlus class="h-4 w-4" />
 										</button>
 									{/if}
 									<button
@@ -283,7 +335,7 @@
 						<button
 							class="flex items-center gap-1 rounded bg-green-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-green-500"
 							onclick={() => loadPlaylistToQueue(selectedPlaylist!.id)}
-							disabled={actionLoading === `load-${selectedPlaylist.id}`}
+							disabled={actionLoading === `load-${selectedPlaylist.id}` || actionLoading === `append-${selectedPlaylist.id}`}
 						>
 							{#if actionLoading === `load-${selectedPlaylist.id}`}
 								<Loader2 class="h-3.5 w-3.5 animate-spin" />
@@ -292,13 +344,41 @@
 							{/if}
 							Play
 						</button>
+						<button
+							class="flex items-center gap-1 rounded border border-zinc-600 px-3 py-1 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
+							onclick={() => loadPlaylistToQueue(selectedPlaylist!.id, true)}
+							disabled={actionLoading === `load-${selectedPlaylist.id}` || actionLoading === `append-${selectedPlaylist.id}`}
+							title="Append to queue"
+						>
+							{#if actionLoading === `append-${selectedPlaylist.id}`}
+								<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							{:else}
+								<ListPlus class="h-3.5 w-3.5" />
+							{/if}
+							Append
+						</button>
 					</div>
 
 					<!-- Track list -->
 					<div class="min-h-0 flex-1 overflow-hidden">
 						<div class="h-full overflow-y-auto" class:max-h-52={!fullHeight}>
 						{#each selectedPlaylist.tracks as track, i (i)}
-							<div class="flex items-center gap-3 px-4 py-1.5">
+							<div
+								class="group flex items-center gap-2 px-2 py-1.5 transition-colors hover:bg-zinc-800/50"
+								class:border-t-2={dropTargetIndex === i && draggedIndex !== null && draggedIndex > i}
+								class:border-b-2={dropTargetIndex === i && draggedIndex !== null && draggedIndex < i}
+								class:border-green-500={dropTargetIndex === i}
+								role="listitem"
+								draggable={true}
+								ondragstart={(e) => handleDragStart(e, i)}
+								ondragend={handleDragEnd}
+								ondragover={(e) => handleDragOver(e, i)}
+								ondragleave={handleDragLeave}
+								ondrop={(e) => handleDrop(e, i)}
+							>
+								<div class="flex-shrink-0 cursor-grab text-zinc-600 hover:text-zinc-400 active:cursor-grabbing">
+									<GripVertical class="h-4 w-4" />
+								</div>
 								<span class="w-5 text-center text-xs text-zinc-500">{i + 1}</span>
 								{#if track.icon}
 									<img
@@ -330,58 +410,3 @@
 		</div>
 	{/if}
 </div>
-
-<!-- Save Queue Dialog -->
-{#if showSaveDialog}
-	<button
-		class="fixed inset-0 z-50 cursor-default bg-black/60 backdrop-blur-sm"
-		onclick={() => (showSaveDialog = false)}
-		aria-label="Close dialog"
-	></button>
-	<div class="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border border-zinc-700 bg-zinc-800 p-5 shadow-xl">
-		<h3 class="mb-4 text-lg font-semibold text-white">Save Queue as Playlist</h3>
-
-		<div class="space-y-3">
-			<div>
-				<label for="playlist-name" class="mb-1 block text-sm text-zinc-400">Name</label>
-				<input
-					id="playlist-name"
-					type="text"
-					class="w-full rounded border border-zinc-600 bg-zinc-700 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none"
-					placeholder="My Playlist"
-					bind:value={newPlaylistName}
-					onkeydown={(e) => e.key === 'Enter' && saveQueueAsPlaylist()}
-				/>
-			</div>
-			<div>
-				<label for="playlist-desc" class="mb-1 block text-sm text-zinc-400">Description (optional)</label>
-				<input
-					id="playlist-desc"
-					type="text"
-					class="w-full rounded border border-zinc-600 bg-zinc-700 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none"
-					placeholder="A great mix..."
-					bind:value={newPlaylistDescription}
-				/>
-			</div>
-		</div>
-
-		<div class="mt-4 flex justify-end gap-2">
-			<button
-				class="rounded px-4 py-2 text-sm text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-white"
-				onclick={() => (showSaveDialog = false)}
-			>
-				Cancel
-			</button>
-			<button
-				class="flex items-center gap-2 rounded bg-green-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-500 disabled:opacity-50"
-				onclick={saveQueueAsPlaylist}
-				disabled={!newPlaylistName.trim() || actionLoading === 'save'}
-			>
-				{#if actionLoading === 'save'}
-					<Loader2 class="h-4 w-4 animate-spin" />
-				{/if}
-				Save
-			</button>
-		</div>
-	</div>
-{/if}

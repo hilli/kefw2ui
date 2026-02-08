@@ -38,6 +38,11 @@
 	let draggedIndex = $state<number | null>(null);
 	let dropTargetIndex = $state<number | null>(null);
 	
+	// Save dialog state
+	let showSaveDialog = $state(false);
+	let newPlaylistName = $state('');
+	let newPlaylistDescription = $state('');
+	
 	// Multi-select state
 	let selectedIndices = $state<Set<number>>(new Set());
 	let selectMode = $state(false);
@@ -158,14 +163,22 @@
 		}
 	}
 
+	function openSaveDialog() {
+		newPlaylistName = `Queue - ${new Date().toLocaleDateString()}`;
+		newPlaylistDescription = '';
+		showSaveDialog = true;
+	}
+
 	async function saveAsPlaylist() {
-		const name = prompt('Enter playlist name:', `Queue - ${new Date().toLocaleDateString()}`);
-		if (!name) return;
-		
+		if (!newPlaylistName.trim()) return;
+
 		try {
 			actionLoading = 'save';
-			await api.saveQueueAsPlaylist(name);
-			// Could show a success toast here
+			await api.saveQueueAsPlaylist(newPlaylistName.trim(), newPlaylistDescription.trim());
+			toasts.success('Queue saved as playlist');
+			showSaveDialog = false;
+			newPlaylistName = '';
+			newPlaylistDescription = '';
 		} catch (e) {
 			toasts.error('Failed to save playlist');
 		} finally {
@@ -405,7 +418,7 @@
 					<!-- Save as playlist -->
 					<button
 						class="rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
-						onclick={saveAsPlaylist}
+						onclick={openSaveDialog}
 						disabled={actionLoading === 'save'}
 						title="Save queue as playlist"
 					>
@@ -632,3 +645,58 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Save Queue as Playlist Dialog -->
+{#if showSaveDialog}
+	<button
+		class="fixed inset-0 z-50 cursor-default bg-black/60 backdrop-blur-sm"
+		onclick={() => (showSaveDialog = false)}
+		aria-label="Close dialog"
+	></button>
+	<div class="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border border-zinc-700 bg-zinc-800 p-5 shadow-xl">
+		<h3 class="mb-4 text-lg font-semibold text-white">Save Queue as Playlist</h3>
+
+		<div class="space-y-3">
+			<div>
+				<label for="queue-playlist-name" class="mb-1 block text-sm text-zinc-400">Name</label>
+				<input
+					id="queue-playlist-name"
+					type="text"
+					class="w-full rounded border border-zinc-600 bg-zinc-700 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none"
+					placeholder="My Playlist"
+					bind:value={newPlaylistName}
+					onkeydown={(e) => e.key === 'Enter' && saveAsPlaylist()}
+				/>
+			</div>
+			<div>
+				<label for="queue-playlist-desc" class="mb-1 block text-sm text-zinc-400">Description (optional)</label>
+				<input
+					id="queue-playlist-desc"
+					type="text"
+					class="w-full rounded border border-zinc-600 bg-zinc-700 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none"
+					placeholder="A great mix..."
+					bind:value={newPlaylistDescription}
+				/>
+			</div>
+		</div>
+
+		<div class="mt-4 flex justify-end gap-2">
+			<button
+				class="rounded px-4 py-2 text-sm text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-white"
+				onclick={() => (showSaveDialog = false)}
+			>
+				Cancel
+			</button>
+			<button
+				class="flex items-center gap-2 rounded bg-green-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-500 disabled:opacity-50"
+				onclick={saveAsPlaylist}
+				disabled={!newPlaylistName.trim() || actionLoading === 'save'}
+			>
+				{#if actionLoading === 'save'}
+					<Loader2 class="h-4 w-4 animate-spin" />
+				{/if}
+				Save
+			</button>
+		</div>
+	</div>
+{/if}
