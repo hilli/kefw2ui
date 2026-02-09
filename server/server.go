@@ -18,6 +18,7 @@ import (
 	"github.com/hilli/go-kef-w2/kefw2"
 
 	"github.com/hilli/kefw2ui/config"
+	mcppkg "github.com/hilli/kefw2ui/mcp"
 	"github.com/hilli/kefw2ui/playlist"
 	"github.com/hilli/kefw2ui/speaker"
 )
@@ -223,6 +224,10 @@ func (s *Server) registerRoutes() {
 
 	// SSE endpoint
 	s.mux.HandleFunc("/events", s.handleSSE)
+
+	// MCP server
+	mcpHandler := mcppkg.NewMCPHandler(s.manager, s.playlists, s.airableCache)
+	s.mux.Handle("/api/mcp", mcpHandler)
 
 	// Static frontend files
 	s.mux.HandleFunc("/", s.handleFrontend)
