@@ -275,6 +275,12 @@ func (s *Server) HandleSpeakerEvent(event kefw2.Event) {
 				"source": string(e.Source),
 			},
 		}
+		// Track standby state so the event reconnection loop can pause
+		if e.Source == kefw2.SourceStandby {
+			s.manager.NotifyStandby()
+		} else {
+			s.manager.NotifyWake()
+		}
 	case *kefw2.PowerEvent:
 		eventData = map[string]any{
 			"type": "power",
@@ -638,6 +644,24 @@ func (s *Server) handleSpeakerGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If the speaker is in standby, return cached info without querying it.
+	if s.manager.IsInStandby() {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"active": map[string]any{
+				"ip":       spk.IPAddress,
+				"name":     spk.Name,
+				"model":    spk.Model,
+				"firmware": spk.FirmwareVersion,
+				"source":   "standby",
+				"volume":   0,
+				"muted":    false,
+				"status":   "standby",
+			},
+		})
+		return
+	}
+
 	ctx := r.Context()
 
 	// Get current state
@@ -839,6 +863,25 @@ func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
 		s.jsonError(w, "No active speaker", http.StatusServiceUnavailable)
+		return
+	}
+
+	// If the speaker is in standby, return a cached standby response
+	// instead of querying it (which would wake it up).
+	if s.manager.IsInStandby() {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state":    "stopped",
+			"volume":   0,
+			"muted":    false,
+			"source":   "standby",
+			"title":    "",
+			"artist":   "",
+			"album":    "",
+			"icon":     "",
+			"duration": 0,
+			"position": 0,
+		})
 		return
 	}
 
@@ -1049,66 +1092,55 @@ func (s *Server) handlePlayerPower(w http.ResponseWriter, r *http.Request) {
 
 		body, _ := io.ReadAll(r.Body)
 
-		// If body is empty or {}, toggle power
-		if len(body) == 0 || string(body) == "{}" {
-			isPoweredOn, _ := spk.IsPoweredOn(ctx)
-			if isPoweredOn {
-				// Power off (standby)
-				if err := spk.PowerOff(ctx); err != nil {
-					s.jsonError(w, "Failed to power off: "+err.Error(), http.StatusInternalServerError)
-					return
-				}
-			} else {
-				// Power on - set source to wifi to wake up
-				if err := spk.SetSource(ctx, kefw2.SourceWiFi); err != nil {
-					s.jsonError(w, "Failed to power on: "+err.Error(), http.StatusInternalServerError)
-					return
-				}
-			}
-		} else {
+		// wantPowerOn tracks the intended result so we can return it without
+		// querying the speaker again (which could wake it from standby).
+		var wantPowerOn bool
+
+		// Determine the desired action
+		isToggle := len(body) == 0 || string(body) == "{}"
+		if !isToggle {
 			if err := json.Unmarshal(body, &req); err != nil {
 				s.jsonError(w, "Invalid request body", http.StatusBadRequest)
 				return
 			}
-
-			switch {
-			case req.PowerOn == nil:
-				// Toggle
-				isPoweredOn, _ := spk.IsPoweredOn(ctx)
-				if isPoweredOn {
-					if err := spk.PowerOff(ctx); err != nil {
-						s.jsonError(w, "Failed to power off: "+err.Error(), http.StatusInternalServerError)
-						return
-					}
-				} else {
-					if err := spk.SetSource(ctx, kefw2.SourceWiFi); err != nil {
-						s.jsonError(w, "Failed to power on: "+err.Error(), http.StatusInternalServerError)
-						return
-					}
-				}
-			case *req.PowerOn:
-				// Power on
-				if err := spk.SetSource(ctx, kefw2.SourceWiFi); err != nil {
-					s.jsonError(w, "Failed to power on: "+err.Error(), http.StatusInternalServerError)
-					return
-				}
-			default:
-				// Power off
-				if err := spk.PowerOff(ctx); err != nil {
-					s.jsonError(w, "Failed to power off: "+err.Error(), http.StatusInternalServerError)
-					return
-				}
-			}
+			isToggle = req.PowerOn == nil
 		}
 
-		// Return new state
-		isPoweredOn, _ := spk.IsPoweredOn(ctx)
-		status, _ := spk.SpeakerState(ctx)
+		if isToggle {
+			// Toggle: read current state, then flip
+			isPoweredOn, _ := spk.IsPoweredOn(ctx)
+			wantPowerOn = !isPoweredOn
+		} else {
+			wantPowerOn = *req.PowerOn
+		}
+
+		// Execute the action
+		if wantPowerOn {
+			if err := spk.SetSource(ctx, kefw2.SourceWiFi); err != nil {
+				s.jsonError(w, "Failed to power on: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			s.manager.NotifyWake()
+		} else {
+			if err := spk.PowerOff(ctx); err != nil {
+				s.jsonError(w, "Failed to power off: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			s.manager.NotifyStandby()
+		}
+
+		// Return the intended state directly — no readback query needed.
+		// After PowerOff the speaker is entering standby; querying it via HTTP
+		// would wake it right back up, defeating the purpose.
+		resultStatus := "standby"
+		if wantPowerOn {
+			resultStatus = "powerOn"
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"poweredOn": isPoweredOn,
-			"status":    string(status),
+			"poweredOn": wantPowerOn,
+			"status":    resultStatus,
 		})
 
 	default:
@@ -1273,6 +1305,13 @@ func (s *Server) handlePlayerSource(w http.ResponseWriter, r *http.Request) {
 		if err := spk.SetSource(r.Context(), source); err != nil {
 			s.jsonError(w, "Failed to set source: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		// Notify manager of standby/wake so it can pause/resume event reconnection
+		if source == kefw2.SourceStandby {
+			s.manager.NotifyStandby()
+		} else {
+			s.manager.NotifyWake()
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -3084,9 +3123,7 @@ func (s *Server) sendInitialState(w http.ResponseWriter, flusher http.Flusher) {
 		return
 	}
 
-	ctx := context.Background()
-
-	// Send speaker info
+	// Send speaker info (this is static metadata, safe even during standby)
 	speakerData, _ := json.Marshal(map[string]any{
 		"type": "speaker",
 		"data": map[string]any{
@@ -3097,6 +3134,27 @@ func (s *Server) sendInitialState(w http.ResponseWriter, flusher http.Flusher) {
 	})
 	fmt.Fprintf(w, "data: %s\n\n", speakerData)
 	flusher.Flush()
+
+	// If the speaker is in standby, send standby state without querying it.
+	// Querying via HTTP would wake it from standby.
+	if s.manager.IsInStandby() {
+		sourceData, _ := json.Marshal(map[string]any{
+			"type": "source",
+			"data": map[string]any{"source": "standby"},
+		})
+		fmt.Fprintf(w, "data: %s\n\n", sourceData)
+		flusher.Flush()
+
+		powerData, _ := json.Marshal(map[string]any{
+			"type": "power",
+			"data": map[string]any{"status": "standby"},
+		})
+		fmt.Fprintf(w, "data: %s\n\n", powerData)
+		flusher.Flush()
+		return
+	}
+
+	ctx := context.Background()
 
 	// Send current volume
 	if volume, err := spk.GetVolume(ctx); err == nil {

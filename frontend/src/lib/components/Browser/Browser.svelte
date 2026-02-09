@@ -634,7 +634,7 @@
 							<!-- Add to Favorites button - for podcast shows and radio stations -->
 							{#if (activeSource === 'podcasts' && item.type === 'container') || (activeSource === 'radio' && item.audioType === 'audioBroadcast')}
 								<button
-									class="rounded p-1.5 text-zinc-400 opacity-0 transition-colors hover:bg-zinc-700 hover:text-red-400 group-hover:opacity-100"
+									class="rounded p-1.5 text-zinc-400 can-hover:opacity-0 transition-colors hover:bg-zinc-700 hover:text-red-400 can-hover:group-hover:opacity-100"
 									onclick={(e) => {
 										e.stopPropagation();
 										addToFavorites(item);
@@ -653,7 +653,7 @@
 								<!-- Add to Queue button - not for radio streams (they don't end) -->
 								{#if item.audioType !== 'audioBroadcast'}
 									<button
-										class="rounded p-1.5 text-zinc-400 opacity-0 transition-colors hover:bg-zinc-700 hover:text-blue-400 group-hover:opacity-100"
+										class="rounded p-1.5 text-zinc-400 can-hover:opacity-0 transition-colors hover:bg-zinc-700 hover:text-blue-400 can-hover:group-hover:opacity-100"
 										onclick={(e) => {
 											e.stopPropagation();
 											addToQueue(item);
@@ -670,7 +670,7 @@
 								{/if}
 								<!-- Play button -->
 								<button
-									class="rounded p-1.5 text-zinc-400 opacity-0 transition-colors hover:bg-zinc-700 hover:text-green-400 group-hover:opacity-100"
+									class="rounded p-1.5 text-zinc-400 can-hover:opacity-0 transition-colors hover:bg-zinc-700 hover:text-green-400 can-hover:group-hover:opacity-100"
 									onclick={(e) => {
 										e.stopPropagation();
 										playItem(item);

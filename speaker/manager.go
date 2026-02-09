@@ -23,6 +23,11 @@ type Manager struct {
 
 	// Speaker connectivity state
 	speakerConnected bool
+
+	// Standby awareness: when true, the reconnection loop pauses
+	// to avoid waking the speaker with HTTP requests.
+	speakerInStandby bool
+	standbyWake      chan struct{} // closed when speaker should wake up
 }
 
 // NewManager creates a new speaker manager.
@@ -64,6 +69,47 @@ func (m *Manager) setSpeakerConnected(connected bool) {
 	if changed && cb != nil {
 		cb(connected)
 	}
+}
+
+// NotifyStandby tells the manager the speaker has entered standby.
+// The event reconnection loop will pause to avoid waking the speaker.
+func (m *Manager) NotifyStandby() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.speakerInStandby {
+		return // already in standby
+	}
+	m.speakerInStandby = true
+	m.standbyWake = make(chan struct{})
+	log.Printf("Speaker entered standby — pausing event reconnection")
+}
+
+// NotifyWake tells the manager the speaker is waking from standby.
+// The event reconnection loop will resume.
+func (m *Manager) NotifyWake() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.speakerInStandby {
+		return // not in standby
+	}
+	m.speakerInStandby = false
+	close(m.standbyWake) // unblock the reconnection loop
+	log.Printf("Speaker waking from standby — resuming event reconnection")
+}
+
+// isInStandby returns the standby state and the wake channel.
+func (m *Manager) isInStandby() (bool, chan struct{}) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.speakerInStandby, m.standbyWake
+}
+
+// IsInStandby returns whether the speaker is known to be in standby.
+// Used by the server to avoid querying the speaker (which would wake it).
+func (m *Manager) IsInStandby() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.speakerInStandby
 }
 
 // Discover finds speakers on the network using mDNS.
@@ -252,6 +298,20 @@ func (m *Manager) listenForEvents(ctx context.Context) {
 		const maxBackoff = 30 * time.Second
 
 		for {
+			// Check if speaker is in standby — if so, wait for wake signal
+			// instead of hammering the speaker with reconnection attempts.
+			if inStandby, wakeCh := m.isInStandby(); inStandby {
+				log.Printf("Speaker is in standby — waiting for wake signal before reconnecting")
+				select {
+				case <-ctx.Done():
+					return
+				case <-wakeCh:
+					log.Printf("Wake signal received — will attempt reconnection")
+					// Reset backoff for fresh reconnection after wake
+					backoff = 2 * time.Second
+				}
+			}
+
 			select {
 			case <-ctx.Done():
 				return

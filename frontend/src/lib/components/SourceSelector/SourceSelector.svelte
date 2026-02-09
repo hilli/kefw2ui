@@ -29,7 +29,13 @@
 		{ id: 'usb', label: 'USB', icon: Usb, description: 'USB audio' }
 	] as const;
 
+	// Standby and loading states shown in the trigger button
+	const standbySource = { id: 'standby', label: 'Standby', icon: Power, description: 'Speaker is asleep' } as const;
+	const loadingSource = { id: '', label: '...', icon: Power, description: 'Loading' } as const;
+
 	function getSourceInfo(sourceId: string) {
+		if (sourceId === 'standby') return standbySource;
+		if (sourceId === '') return loadingSource;
 		return sources.find((s) => s.id === sourceId) || sources[0];
 	}
 
@@ -59,6 +65,7 @@
 
 	const currentSource = $derived(getSourceInfo($player.source));
 	const CurrentIcon = $derived(currentSource.icon);
+	const isStandby = $derived($player.source === 'standby');
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -117,12 +124,14 @@
 			</div>
 
 			<!-- Standby option -->
-			<div class="border-t border-zinc-700 py-1">
-				<button
+		<div class="border-t border-zinc-700 py-1">
+			<button
 					onclick={() => handleSelectSource('standby')}
 					class={cn(
 						'flex w-full items-center gap-3 px-4 py-2 text-left transition-colors',
-						'text-zinc-400 hover:bg-zinc-700 hover:text-white'
+						isStandby
+							? 'bg-zinc-700 text-white'
+							: 'text-zinc-400 hover:bg-zinc-700 hover:text-white'
 					)}
 				>
 					<Power class="h-4 w-4 flex-shrink-0" />
@@ -130,6 +139,9 @@
 						<div class="font-medium">Standby</div>
 						<div class="text-xs text-zinc-500">Put speaker to sleep</div>
 					</div>
+					{#if isStandby}
+						<Check class="h-4 w-4 flex-shrink-0 text-green-500" />
+					{/if}
 				</button>
 			</div>
 		</div>

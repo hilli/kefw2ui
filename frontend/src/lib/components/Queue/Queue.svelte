@@ -712,8 +712,8 @@
 								{:else if i === currentIndex}
 									<Play class="h-4 w-4 text-green-400" />
 								{:else}
-									<span class="text-xs text-zinc-500 group-hover:hidden">{i + 1}</span>
-									<Play class="hidden h-4 w-4 text-zinc-400 group-hover:block" />
+								<span class="text-xs text-zinc-500 can-hover:group-hover:hidden">{i + 1}</span>
+								<Play class="hidden h-4 w-4 text-zinc-400 can-hover:group-hover:block" />
 								{/if}
 							</button>
 
@@ -775,14 +775,14 @@
 
 							<!-- Duration -->
 							{#if track.duration > 0}
-								<span class="flex-shrink-0 text-xs text-zinc-500 group-hover:hidden">
-									{formatDuration(track.duration)}
-								</span>
+							<span class="flex-shrink-0 text-xs text-zinc-500 can-hover:group-hover:hidden">
+								{formatDuration(track.duration)}
+							</span>
 							{/if}
 							
 							<!-- Remove button (shown on hover) -->
 							<button
-								class="hidden flex-shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-red-400 group-hover:block"
+								class="can-hover:hidden flex-shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-red-400 can-hover:group-hover:block"
 								onclick={(e) => removeTrack(i, e)}
 								disabled={actionLoading === `remove-${i}`}
 								title="Remove from queue"

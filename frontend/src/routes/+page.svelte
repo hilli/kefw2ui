@@ -109,9 +109,9 @@
 				<PaneResizer
 					class="group flex w-1.5 items-center justify-center bg-zinc-800 transition-colors hover:bg-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
 				>
-					<div
-						class="flex h-8 w-3 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100"
-					>
+				<div
+					class="flex h-8 w-3 items-center justify-center rounded-sm can-hover:opacity-0 transition-opacity can-hover:group-hover:opacity-100"
+				>
 						<GripVertical class="h-4 w-4 text-zinc-400" />
 					</div>
 				</PaneResizer>
@@ -131,7 +131,7 @@
 							class="group flex h-1.5 items-center justify-center bg-zinc-800 transition-colors hover:bg-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
 						>
 							<div
-								class="flex h-3 w-8 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100"
+								class="flex h-3 w-8 items-center justify-center rounded-sm can-hover:opacity-0 transition-opacity can-hover:group-hover:opacity-100"
 							>
 								<GripHorizontal class="h-4 w-4 text-zinc-400" />
 							</div>
@@ -149,7 +149,7 @@
 							class="group flex h-1.5 items-center justify-center bg-zinc-800 transition-colors hover:bg-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
 						>
 							<div
-								class="flex h-3 w-8 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100"
+								class="flex h-3 w-8 items-center justify-center rounded-sm can-hover:opacity-0 transition-opacity can-hover:group-hover:opacity-100"
 							>
 								<GripHorizontal class="h-4 w-4 text-zinc-400" />
 							</div>

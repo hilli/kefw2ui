@@ -569,24 +569,24 @@
 									{#if actionLoading === `load-${pl.id}` || actionLoading === `append-${pl.id}`}
 										<Loader2 class="h-4 w-4 animate-spin text-zinc-400" />
 									{:else}
-										<button
-											class="hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-green-400 group-hover:block"
-											onclick={() => loadPlaylistToQueue(pl.id)}
-											title="Play playlist (replace queue)"
-										>
-											<Play class="h-4 w-4" />
-										</button>
-										<button
-											class="hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-blue-400 group-hover:block"
-											onclick={() => loadPlaylistToQueue(pl.id, true)}
-											title="Append to queue"
-										>
-											<ListPlus class="h-4 w-4" />
-										</button>
-									{/if}
 									<button
-										class="hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-red-400 group-hover:block"
-										onclick={(e) => deletePlaylist(pl.id, e)}
+										class="can-hover:hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-green-400 can-hover:group-hover:block"
+										onclick={() => loadPlaylistToQueue(pl.id)}
+										title="Play playlist (replace queue)"
+									>
+										<Play class="h-4 w-4" />
+									</button>
+									<button
+										class="can-hover:hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-blue-400 can-hover:group-hover:block"
+										onclick={() => loadPlaylistToQueue(pl.id, true)}
+										title="Append to queue"
+									>
+										<ListPlus class="h-4 w-4" />
+									</button>
+									{/if}
+								<button
+									class="can-hover:hidden rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-red-400 can-hover:group-hover:block"
+									onclick={(e) => deletePlaylist(pl.id, e)}
 										disabled={actionLoading === `delete-${pl.id}`}
 										title="Delete playlist"
 									>
@@ -759,12 +759,12 @@
 									{/if}
 								</div>
 								{#if track.duration}
-									<span class="text-xs text-zinc-500 group-hover:hidden">{formatDuration(track.duration)}</span>
+									<span class="text-xs text-zinc-500 can-hover:group-hover:hidden">{formatDuration(track.duration)}</span>
 								{/if}
 								<!-- Remove button (shown on hover, hidden in select mode) -->
 								{#if !(selectMode || selectedIndices.size > 0)}
 									<button
-										class="hidden flex-shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-red-400 group-hover:block"
+										class="can-hover:hidden flex-shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-red-400 can-hover:group-hover:block"
 										onclick={(e) => removeTrack(i, e)}
 										disabled={actionLoading === `remove-${i}`}
 										title="Remove from playlist"

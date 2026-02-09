@@ -176,7 +176,7 @@
 		<div
 			bind:this={progressBarRef}
 			class={cn(
-				'relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-700 transition-all group-hover:h-2',
+				'relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-700 transition-all can-hover:group-hover:h-2',
 				isDisconnected ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
 			)}
 			class:h-2={isSeeking}
@@ -199,8 +199,8 @@
 			<!-- Thumb indicator -->
 			<div
 				class="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white shadow-md transition-opacity"
-				class:opacity-0={!isSeeking}
-				class:group-hover:opacity-100={$player.duration > 0}
+				class:can-hover:opacity-0={!isSeeking}
+				class:can-hover:group-hover:opacity-100={$player.duration > 0}
 				style="left: calc({progress}% - 6px)"
 			></div>
 		</div>

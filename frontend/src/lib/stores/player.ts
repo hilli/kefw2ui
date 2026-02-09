@@ -28,8 +28,8 @@ const initialPlayerState: PlayerState = {
 	position: 0,
 	volume: 50,
 	muted: false,
-	source: 'wifi',
-	poweredOn: true,
+	source: '',
+	poweredOn: false,
 	audioType: '',
 	live: false
 };
