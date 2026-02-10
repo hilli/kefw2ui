@@ -226,7 +226,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/events", s.handleSSE)
 
 	// MCP server
-	mcpHandler := mcppkg.NewMCPHandler(s.manager, s.playlists, s.airableCache)
+	mcpHandler := mcppkg.NewMCPHandler(s.manager, s.playlists, s.airableCache, s.BroadcastPlaylistsChanged)
 	s.mux.Handle("/api/mcp", mcpHandler)
 
 	// Static frontend files
@@ -244,6 +244,21 @@ func (s *Server) HandleSpeakerHealth(connected bool) {
 	})
 	if err != nil {
 		log.Printf("Error marshaling speakerHealth event: %v", err)
+		return
+	}
+
+	s.broadcastSSE(payload)
+}
+
+// BroadcastPlaylistsChanged sends a "playlists" SSE event to all connected
+// clients so they can refresh their playlist lists. Called after any playlist
+// CRUD operation (create, update, delete) from both REST and MCP handlers.
+func (s *Server) BroadcastPlaylistsChanged() {
+	payload, err := json.Marshal(map[string]any{
+		"type": "playlists",
+	})
+	if err != nil {
+		log.Printf("Error marshaling playlists event: %v", err)
 		return
 	}
 
@@ -1691,6 +1706,7 @@ func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"playlist": s.proxyPlaylistIcons(pl),
 		})
+		s.BroadcastPlaylistsChanged()
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1747,6 +1763,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"playlist": s.proxyPlaylistIcons(pl),
 		})
+		s.BroadcastPlaylistsChanged()
 
 	case http.MethodDelete:
 		// Delete playlist
@@ -1757,6 +1774,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		s.BroadcastPlaylistsChanged()
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1852,6 +1870,7 @@ func (s *Server) handleSaveQueueAsPlaylist(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"playlist": s.proxyPlaylistIcons(pl),
 	})
+	s.BroadcastPlaylistsChanged()
 }
 
 // handleLoadPlaylist loads a playlist to the speaker's queue.
@@ -1909,7 +1928,9 @@ func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// Convert playlist tracks to ContentItems, filtering out non-playable items
+	// Convert playlist tracks to ContentItems, filtering out non-playable items.
+	// For UPnP tracks that have a browsable path but no stream URI, resolve the
+	// full track details from the speaker API (the speaker returns the stream URL).
 	contentItems := make([]kefw2.ContentItem, 0, len(pl.Tracks))
 	skipped := 0
 	for _, track := range pl.Tracks {
@@ -1919,8 +1940,31 @@ func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Skip tracks with no playback URI
-		if track.URI == "" {
+		// Skip tracks with no playback URI and no browsable path
+		if track.URI == "" && track.Path == "" {
+			skipped++
+			continue
+		}
+
+		// If the track has a browsable path but no stream URI, resolve it
+		// from the speaker API to get the full ContentItem with stream URL.
+		// This handles UPnP tracks that were added to playlists by path only.
+		if track.URI == "" && track.Path != "" {
+			resp, resolveErr := airable.GetRows(track.Path, 0, 1)
+			if resolveErr == nil {
+				var resolved *kefw2.ContentItem
+				switch {
+				case resp.Roles != nil:
+					resolved = resp.Roles
+				case len(resp.Rows) > 0:
+					resolved = &resp.Rows[0]
+				}
+				if resolved != nil {
+					contentItems = append(contentItems, *resolved)
+					continue
+				}
+			}
+			// Resolution failed — fall through to manual construction
 			skipped++
 			continue
 		}

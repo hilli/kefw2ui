@@ -129,11 +129,27 @@ func (h *Handler) handleBrowseMedia(_ context.Context, req mcppkg.CallToolReques
 			"path":     row.Path,
 			"playable": row.Type == "audio" || row.ContainerPlayable,
 		}
+		if row.ID != "" {
+			item["id"] = row.ID
+		}
+		if row.Icon != "" {
+			item["icon"] = row.Icon
+		}
 		if row.MediaData != nil {
 			item["artist"] = row.MediaData.MetaData.Artist
 			item["album"] = row.MediaData.MetaData.Album
+			if row.MediaData.MetaData.ServiceID != "" {
+				item["serviceId"] = row.MediaData.MetaData.ServiceID
+			}
 			if len(row.MediaData.Resources) > 0 {
-				item["duration"] = row.MediaData.Resources[0].Duration
+				res := row.MediaData.Resources[0]
+				item["duration"] = res.Duration
+				if res.URI != "" {
+					item["uri"] = res.URI
+				}
+				if res.MimeType != "" {
+					item["mimeType"] = res.MimeType
+				}
 			}
 		}
 		items = append(items, item)
@@ -168,7 +184,7 @@ func (h *Handler) handleSearchMedia(_ context.Context, req mcppkg.CallToolReques
 
 	items := make([]map[string]any, 0, len(results))
 	for _, track := range results {
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"title":    track.Title,
 			"artist":   track.Artist,
 			"album":    track.Album,
@@ -176,7 +192,17 @@ func (h *Handler) handleSearchMedia(_ context.Context, req mcppkg.CallToolReques
 			"duration": track.Duration,
 			"type":     "audio",
 			"playable": true,
-		})
+		}
+		if track.URI != "" {
+			item["uri"] = track.URI
+		}
+		if track.MimeType != "" {
+			item["mimeType"] = track.MimeType
+		}
+		if track.Icon != "" {
+			item["icon"] = track.Icon
+		}
+		items = append(items, item)
 	}
 
 	return mcppkg.NewToolResultText(jsonString(map[string]any{
@@ -239,8 +265,28 @@ func (h *Handler) handleBrowseRadio(_ context.Context, req mcppkg.CallToolReques
 			"path":     row.Path,
 			"playable": row.Type == "audio" || row.ContainerPlayable || row.AudioType == "audioBroadcast",
 		}
+		if row.ID != "" {
+			item["id"] = row.ID
+		}
+		if row.Icon != "" {
+			item["icon"] = row.Icon
+		}
 		if row.LongDescription != "" {
 			item["description"] = row.LongDescription
+		}
+		if row.MediaData != nil {
+			if row.MediaData.MetaData.ServiceID != "" {
+				item["serviceId"] = row.MediaData.MetaData.ServiceID
+			}
+			if len(row.MediaData.Resources) > 0 {
+				res := row.MediaData.Resources[0]
+				if res.URI != "" {
+					item["uri"] = res.URI
+				}
+				if res.MimeType != "" {
+					item["mimeType"] = res.MimeType
+				}
+			}
 		}
 		items = append(items, item)
 	}
@@ -300,11 +346,29 @@ func (h *Handler) handleBrowsePodcasts(_ context.Context, req mcppkg.CallToolReq
 			"path":     row.Path,
 			"playable": row.Type == "audio",
 		}
+		if row.ID != "" {
+			item["id"] = row.ID
+		}
+		if row.Icon != "" {
+			item["icon"] = row.Icon
+		}
 		if row.LongDescription != "" {
 			item["description"] = row.LongDescription
 		}
-		if row.MediaData != nil && len(row.MediaData.Resources) > 0 {
-			item["duration"] = row.MediaData.Resources[0].Duration
+		if row.MediaData != nil {
+			if row.MediaData.MetaData.ServiceID != "" {
+				item["serviceId"] = row.MediaData.MetaData.ServiceID
+			}
+			if len(row.MediaData.Resources) > 0 {
+				res := row.MediaData.Resources[0]
+				item["duration"] = res.Duration
+				if res.URI != "" {
+					item["uri"] = res.URI
+				}
+				if res.MimeType != "" {
+					item["mimeType"] = res.MimeType
+				}
+			}
 		}
 		items = append(items, item)
 	}

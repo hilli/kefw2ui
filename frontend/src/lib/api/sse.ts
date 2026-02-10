@@ -9,7 +9,7 @@ import {
 	updateSpeakerHealth
 } from '$lib/stores/player';
 import { activeSpeaker, updateSpeakers } from '$lib/stores/speakers';
-import { queueRefresh, playModeRefresh } from '$lib/stores/queue';
+import { queueRefresh, playModeRefresh, playlistsRefresh } from '$lib/stores/queue';
 import { api } from '$lib/api/client';
 
 let eventSource: EventSource | null = null;
@@ -301,6 +301,10 @@ function handleEvent(message: { type: string; data: unknown }) {
 		case 'playMode':
 			// Play mode changed on the speaker, trigger a refresh
 			playModeRefresh.refresh();
+			break;
+		case 'playlists':
+			// Playlist list changed (CRUD from MCP or another client), trigger a refresh
+			playlistsRefresh.refresh();
 			break;
 		case 'speakerHealth':
 			updateSpeakerHealth((message.data as { connected: boolean }).connected);

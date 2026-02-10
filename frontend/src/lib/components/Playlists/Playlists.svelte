@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, type MediaData } from '$lib/api/client';
 	import { toasts } from '$lib/stores/toast';
-	import { queueRefresh } from '$lib/stores/queue';
+	import { queueRefresh, playlistsRefresh } from '$lib/stores/queue';
 	import {
 		ListMusic,
 		Play,
@@ -119,6 +119,26 @@
 			loading = false;
 		}
 	}
+
+	// Silent refresh: re-fetches the playlist list without setting the loading
+	// flag, so the UI doesn't flicker. Used when an SSE event tells us another
+	// client (or MCP) changed playlists.
+	async function refreshPlaylistsSilently() {
+		try {
+			const response = await api.getPlaylists();
+			playlists = response.playlists || [];
+		} catch {
+			// Silently ignore — the user's current view stays intact
+		}
+	}
+
+	// Subscribe to SSE-driven playlist refresh events
+	const unsubPlaylistRefresh = playlistsRefresh.subscribe((n: number) => {
+		// Skip the initial value (0) emitted on subscribe
+		if (n > 0) {
+			refreshPlaylistsSilently();
+		}
+	});
 
 	async function selectPlaylist(id: string) {
 		try {
@@ -485,6 +505,9 @@
 
 	onMount(() => {
 		loadPlaylists();
+		return () => {
+			unsubPlaylistRefresh();
+		};
 	});
 </script>
 

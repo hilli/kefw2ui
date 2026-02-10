@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -25,13 +26,17 @@ func (h *Handler) registerPlaylistTools(s *server.MCPServer) {
 	), h.handleGetPlaylist)
 
 	s.AddTool(mcppkg.NewTool("create_playlist",
-		mcppkg.WithDescription("Create a new empty playlist"),
+		mcppkg.WithDescription("Create a new playlist, optionally with tracks. Tracks can be provided directly without needing to use the speaker queue."),
 		mcppkg.WithString("name",
 			mcppkg.Required(),
 			mcppkg.Description("Playlist name"),
 		),
 		mcppkg.WithString("description",
 			mcppkg.Description("Optional playlist description"),
+		),
+		mcppkg.WithArray("tracks",
+			mcppkg.Description("Optional array of tracks to include in the playlist"),
+			mcppkg.Items(trackSchema()),
 		),
 	), h.handleCreatePlaylist)
 
@@ -67,6 +72,32 @@ func (h *Handler) registerPlaylistTools(s *server.MCPServer) {
 			mcppkg.Description("Optional playlist description"),
 		),
 	), h.handleSaveQueueAsPlaylist)
+
+	s.AddTool(mcppkg.NewTool("add_tracks_to_playlist",
+		mcppkg.WithDescription("Add tracks to an existing playlist. Use this to build playlists directly without touching the speaker queue."),
+		mcppkg.WithString("playlist_id",
+			mcppkg.Required(),
+			mcppkg.Description("The playlist ID to add tracks to"),
+		),
+		mcppkg.WithArray("tracks",
+			mcppkg.Required(),
+			mcppkg.Description("Array of tracks to add to the playlist"),
+			mcppkg.Items(trackSchema()),
+		),
+	), h.handleAddTracksToPlaylist)
+
+	s.AddTool(mcppkg.NewTool("remove_tracks_from_playlist",
+		mcppkg.WithDescription("Remove tracks from a playlist by their indices (0-based)"),
+		mcppkg.WithString("playlist_id",
+			mcppkg.Required(),
+			mcppkg.Description("The playlist ID to remove tracks from"),
+		),
+		mcppkg.WithArray("indices",
+			mcppkg.Required(),
+			mcppkg.Description("Array of track indices to remove (0-based)"),
+			mcppkg.WithNumberItems(),
+		),
+	), h.handleRemoveTracksFromPlaylist)
 
 	s.AddTool(mcppkg.NewTool("load_playlist",
 		mcppkg.WithDescription("Load a playlist into the speaker's play queue"),
@@ -136,11 +167,20 @@ func (h *Handler) handleCreatePlaylist(_ context.Context, req mcppkg.CallToolReq
 
 	description := req.GetString("description", "")
 
-	pl, err := h.playlists.Create(name, description, nil)
+	var tracks []playlist.Track
+	if rawTracks, ok := req.GetArguments()["tracks"]; ok && rawTracks != nil {
+		tracks, err = parseTracks(rawTracks)
+		if err != nil {
+			return mcppkg.NewToolResultError("Invalid tracks: " + err.Error()), nil
+		}
+	}
+
+	pl, err := h.playlists.Create(name, description, tracks)
 	if err != nil {
 		return mcppkg.NewToolResultError("Failed to create playlist: " + err.Error()), nil
 	}
 
+	h.notifyPlaylistChange()
 	return mcppkg.NewToolResultText(jsonString(map[string]any{"playlist": pl})), nil
 }
 
@@ -168,6 +208,7 @@ func (h *Handler) handleUpdatePlaylist(_ context.Context, req mcppkg.CallToolReq
 		return mcppkg.NewToolResultError("Failed to update playlist: " + err.Error()), nil
 	}
 
+	h.notifyPlaylistChange()
 	return mcppkg.NewToolResultText(jsonString(map[string]any{"playlist": pl})), nil
 }
 
@@ -185,6 +226,7 @@ func (h *Handler) handleDeletePlaylist(_ context.Context, req mcppkg.CallToolReq
 		return mcppkg.NewToolResultError("Failed to delete playlist: " + err.Error()), nil
 	}
 
+	h.notifyPlaylistChange()
 	return mcppkg.NewToolResultText(`{"status":"ok"}`), nil
 }
 
@@ -246,6 +288,7 @@ func (h *Handler) handleSaveQueueAsPlaylist(_ context.Context, req mcppkg.CallTo
 		return mcppkg.NewToolResultError("Failed to create playlist: " + err.Error()), nil
 	}
 
+	h.notifyPlaylistChange()
 	return mcppkg.NewToolResultText(jsonString(map[string]any{
 		"playlist":   pl,
 		"trackCount": len(tracks),
@@ -290,7 +333,28 @@ func (h *Handler) handleLoadPlaylist(_ context.Context, req mcppkg.CallToolReque
 	contentItems := make([]kefw2.ContentItem, 0, len(pl.Tracks))
 	skipped := 0
 	for _, track := range pl.Tracks {
-		if track.Type == "container" || track.URI == "" {
+		if track.Type == "container" || (track.URI == "" && track.Path == "") {
+			skipped++
+			continue
+		}
+
+		// If the track has a browsable path but no stream URI, resolve it
+		// from the speaker API to get the full ContentItem with stream URL.
+		if track.URI == "" && track.Path != "" {
+			resp, resolveErr := airable.GetRows(track.Path, 0, 1)
+			if resolveErr == nil {
+				var resolved *kefw2.ContentItem
+				switch {
+				case resp.Roles != nil:
+					resolved = resp.Roles
+				case len(resp.Rows) > 0:
+					resolved = &resp.Rows[0]
+				}
+				if resolved != nil {
+					contentItems = append(contentItems, *resolved)
+					continue
+				}
+			}
 			skipped++
 			continue
 		}
@@ -341,4 +405,147 @@ func (h *Handler) handleLoadPlaylist(_ context.Context, req mcppkg.CallToolReque
 		"trackCount": len(contentItems),
 		"skipped":    skipped,
 	})), nil
+}
+
+func (h *Handler) handleAddTracksToPlaylist(_ context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+	if h.playlists == nil {
+		return mcppkg.NewToolResultError("Playlist manager not available"), nil
+	}
+
+	id, err := req.RequireString("playlist_id")
+	if err != nil {
+		return mcppkg.NewToolResultError("playlist_id is required"), nil
+	}
+
+	rawTracks, ok := req.GetArguments()["tracks"]
+	if !ok || rawTracks == nil {
+		return mcppkg.NewToolResultError("tracks is required"), nil
+	}
+
+	tracks, err := parseTracks(rawTracks)
+	if err != nil {
+		return mcppkg.NewToolResultError("Invalid tracks: " + err.Error()), nil
+	}
+
+	if len(tracks) == 0 {
+		return mcppkg.NewToolResultError("tracks must not be empty"), nil
+	}
+
+	pl, err := h.playlists.AddTracks(id, tracks)
+	if err != nil {
+		return mcppkg.NewToolResultError("Failed to add tracks: " + err.Error()), nil
+	}
+
+	h.notifyPlaylistChange()
+	return mcppkg.NewToolResultText(jsonString(map[string]any{
+		"playlist":    pl,
+		"tracksAdded": len(tracks),
+	})), nil
+}
+
+func (h *Handler) handleRemoveTracksFromPlaylist(_ context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+	if h.playlists == nil {
+		return mcppkg.NewToolResultError("Playlist manager not available"), nil
+	}
+
+	id, err := req.RequireString("playlist_id")
+	if err != nil {
+		return mcppkg.NewToolResultError("playlist_id is required"), nil
+	}
+
+	indices := req.GetIntSlice("indices", nil)
+	if len(indices) == 0 {
+		return mcppkg.NewToolResultError("indices is required and must not be empty"), nil
+	}
+
+	pl, err := h.playlists.RemoveTracks(id, indices)
+	if err != nil {
+		return mcppkg.NewToolResultError("Failed to remove tracks: " + err.Error()), nil
+	}
+
+	h.notifyPlaylistChange()
+	return mcppkg.NewToolResultText(jsonString(map[string]any{
+		"playlist":      pl,
+		"tracksRemoved": len(indices),
+	})), nil
+}
+
+// trackSchema returns the JSON Schema definition for a track object, used by
+// tools that accept track arrays.
+func trackSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"title":     map[string]any{"type": "string", "description": "Track title"},
+			"artist":    map[string]any{"type": "string", "description": "Artist name"},
+			"album":     map[string]any{"type": "string", "description": "Album name"},
+			"duration":  map[string]any{"type": "number", "description": "Duration in milliseconds"},
+			"icon":      map[string]any{"type": "string", "description": "URL to track artwork"},
+			"path":      map[string]any{"type": "string", "description": "Airable path for playback"},
+			"id":        map[string]any{"type": "string", "description": "Track identifier"},
+			"type":      map[string]any{"type": "string", "description": "Track type (e.g. audio)"},
+			"uri":       map[string]any{"type": "string", "description": "Direct playback URI (e.g. http://server/file.flac)"},
+			"mimeType":  map[string]any{"type": "string", "description": "Content type (e.g. audio/flac)"},
+			"serviceId": map[string]any{"type": "string", "description": "Service identifier (e.g. UPnP, airableRadios)"},
+		},
+		"required": []string{"title"},
+	}
+}
+
+// parseTracks converts the raw "tracks" argument (an []any from JSON) into
+// typed playlist.Track values.
+func parseTracks(raw any) ([]playlist.Track, error) {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("tracks must be an array")
+	}
+
+	tracks := make([]playlist.Track, 0, len(items))
+	for i, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("track at index %d is not an object", i)
+		}
+
+		track := playlist.Track{
+			Title:     extractString(m, "title"),
+			Artist:    extractString(m, "artist"),
+			Album:     extractString(m, "album"),
+			Icon:      extractString(m, "icon"),
+			Path:      extractString(m, "path"),
+			ID:        extractString(m, "id"),
+			Type:      extractString(m, "type"),
+			URI:       extractString(m, "uri"),
+			MimeType:  extractString(m, "mimeType"),
+			ServiceID: extractString(m, "serviceId"),
+		}
+		if dur, ok := m["duration"].(float64); ok {
+			track.Duration = int(dur)
+		}
+
+		if track.Title == "" {
+			return nil, fmt.Errorf("track at index %d is missing required field 'title'", i)
+		}
+
+		tracks = append(tracks, track)
+	}
+
+	return tracks, nil
+}
+
+// extractString safely extracts a string from a map, returning "" if missing or wrong type.
+func extractString(m map[string]any, key string) string {
+	v, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
+// notifyPlaylistChange calls the onPlaylistChange callback (if set) to
+// broadcast an SSE event so connected UI clients refresh their playlist list.
+func (h *Handler) notifyPlaylistChange() {
+	if h.onPlaylistChange != nil {
+		h.onPlaylistChange()
+	}
 }

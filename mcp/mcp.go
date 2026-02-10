@@ -17,19 +17,22 @@ import (
 
 // Handler holds the shared dependencies needed by all MCP tool/resource handlers.
 type Handler struct {
-	manager      *speaker.Manager
-	playlists    *playlist.Manager
-	airableCache *kefw2.RowsCache
+	manager          *speaker.Manager
+	playlists        *playlist.Manager
+	airableCache     *kefw2.RowsCache
+	onPlaylistChange func() // called after playlist CRUD to notify SSE clients
 }
 
 // NewMCPHandler creates a fully-configured MCP server with all tools, resources,
 // and prompts registered, and returns it as an http.Handler suitable for mounting
-// on an existing ServeMux.
-func NewMCPHandler(mgr *speaker.Manager, pl *playlist.Manager, cache *kefw2.RowsCache) http.Handler {
+// on an existing ServeMux. The onPlaylistChange callback is invoked after any
+// playlist mutation so the caller can broadcast updates to connected clients.
+func NewMCPHandler(mgr *speaker.Manager, pl *playlist.Manager, cache *kefw2.RowsCache, onPlaylistChange func()) http.Handler {
 	h := &Handler{
-		manager:      mgr,
-		playlists:    pl,
-		airableCache: cache,
+		manager:          mgr,
+		playlists:        pl,
+		airableCache:     cache,
+		onPlaylistChange: onPlaylistChange,
 	}
 
 	s := server.NewMCPServer("kef-speakers", "1.0.0",

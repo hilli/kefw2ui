@@ -1,27 +1,21 @@
 import { writable } from 'svelte/store';
 
-// Simple store to trigger queue refreshes
-// When the value changes, any subscriber will be notified
-function createQueueRefreshStore() {
+// Simple counter-based store that triggers refreshes.
+// When refresh() is called the value increments, notifying all subscribers.
+function createRefreshStore() {
 	const { subscribe, update } = writable(0);
 
 	return {
 		subscribe,
-		// Call this to trigger a queue refresh
 		refresh: () => update(n => n + 1)
 	};
 }
 
-export const queueRefresh = createQueueRefreshStore();
+// Trigger for queue refreshes (speaker notifies us via SSE)
+export const queueRefresh = createRefreshStore();
 
 // Trigger for play mode refreshes (speaker notifies us via SSE)
-function createPlayModeRefreshStore() {
-	const { subscribe, update } = writable(0);
+export const playModeRefresh = createRefreshStore();
 
-	return {
-		subscribe,
-		refresh: () => update(n => n + 1)
-	};
-}
-
-export const playModeRefresh = createPlayModeRefreshStore();
+// Trigger for playlist list refreshes (server notifies us via SSE after CRUD)
+export const playlistsRefresh = createRefreshStore();
