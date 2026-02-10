@@ -82,3 +82,5 @@ require (
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	gvisor.dev/gvisor v0.0.0-20250205023644-9414b50a5633 // indirect
 )
+
+replace github.com/hilli/go-kef-w2 => ..

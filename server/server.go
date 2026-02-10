@@ -953,7 +953,7 @@ func (s *Server) handlePlayer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePlayerPlay toggles play/pause.
+// handlePlayerPlay intelligently resumes or starts playback from the queue.
 func (s *Server) handlePlayerPlay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -966,13 +966,25 @@ func (s *Server) handlePlayerPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := spk.PlayPause(r.Context()); err != nil {
-		s.jsonError(w, "Play/pause failed: "+err.Error(), http.StatusInternalServerError)
+	airable := kefw2.NewAirableClient(spk)
+	result, err := airable.PlayOrResumeFromQueue(r.Context())
+	if err != nil {
+		s.jsonError(w, "Play failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	resp := map[string]any{
+		"status": "ok",
+		"action": string(result.Action),
+	}
+	if result.Track != nil {
+		resp["track"] = result.Track.Title
+		resp["index"] = result.Index
+		resp["shuffled"] = result.Shuffled
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handlePlayerStop stops playback (for radio/streaming where pause doesn't apply).

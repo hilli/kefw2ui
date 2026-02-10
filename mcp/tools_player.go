@@ -14,7 +14,7 @@ func (h *Handler) registerPlayerTools(s *server.MCPServer) {
 	), h.handleGetPlayerStatus)
 
 	s.AddTool(mcppkg.NewTool("play",
-		mcppkg.WithDescription("Resume playback on the active speaker"),
+		mcppkg.WithDescription("Intelligently resume or start playback. Resumes if paused, starts from queue if stopped (respects shuffle mode), or reports if already playing."),
 	), h.handlePlay)
 
 	s.AddTool(mcppkg.NewTool("pause",
@@ -151,10 +151,22 @@ func (h *Handler) handlePlay(ctx context.Context, _ mcppkg.CallToolRequest) (*mc
 		return noSpeakerError(), nil
 	}
 
-	if err := spk.PlayPause(ctx); err != nil {
+	airable := kefw2.NewAirableClient(spk)
+	result, err := airable.PlayOrResumeFromQueue(ctx)
+	if err != nil {
 		return mcppkg.NewToolResultError("Play failed: " + err.Error()), nil
 	}
-	return mcppkg.NewToolResultText(`{"status":"ok"}`), nil
+
+	resp := map[string]any{
+		"status": "ok",
+		"action": string(result.Action),
+	}
+	if result.Track != nil {
+		resp["track"] = result.Track.Title
+		resp["index"] = result.Index
+		resp["shuffled"] = result.Shuffled
+	}
+	return mcppkg.NewToolResultText(jsonString(resp)), nil
 }
 
 func (h *Handler) handlePause(ctx context.Context, _ mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
