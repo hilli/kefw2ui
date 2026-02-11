@@ -11,15 +11,26 @@ services:
       # Share config with CLI - adjust path for your OS
       # Linux: ~/.config/kefw2
       # macOS: ~/Library/Application Support/kefw2
-      - ${HOME}/.config/kefw2:/home/kefw2ui/.config/kefw2
+      #- ${HOME}/.config/kefw2:/home/kefw2ui/.config/kefw2
+      #- ${HOME}/Library/Application Support/kefw2:/home/kefw2ui/.config/kefw2
+      # Persist config (.config/kefw2) and cache (.cache/kefw2) across restarts
+      - kefw2ui-state:/home/kefw2ui
       # Tailscale state persistence (only needed when TS_ENABLED=true)
       - tailscale-state:/data/tailscale
-    # network_mode: host is required for mDNS speaker discovery
-    # If you don't need auto-discovery, you can remove this and manually add speakers
-    network_mode: host
+    # network_mode: host is required for mDNS speaker discovery.
+    # If you use KEFW2UI_SPEAKER_IPS with KEFW2UI_NO_DISCOVERY=true,
+    # you can remove network_mode: host and use the ports: mapping instead.
+    # You should definatly not use it with docker on MacOS
+    # network_mode: host
     restart: unless-stopped
     environment:
       - TZ=${TZ:-UTC}
+      # Speaker IPs (comma-separated, use with KEFW2UI_NO_DISCOVERY to skip mDNS)
+      - KEFW2UI_SPEAKER_IPS=10.0.0.149,10.0.0.93
+      - KEFW2UI_NO_DISCOVERY=true
+      # Image cache: disk TTL (0 = never expire, default 7d) and memory cap in MB
+      # - KEFW2UI_IMAGE_CACHE_TTL=7d
+      # - KEFW2UI_IMAGE_CACHE_MEM_MB=50
       # Tailscale (uncomment to enable)
       # - TS_ENABLED=true
       # - TS_HOSTNAME=kefw2ui
@@ -27,4 +38,5 @@ services:
       # - TS_STATE_DIR=/data/tailscale
 
 volumes:
+  kefw2ui-state:
   tailscale-state:

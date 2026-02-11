@@ -30,6 +30,10 @@ type Options struct {
 	FrontendFS     embed.FS
 	Config         *config.Config
 	SpeakerManager *speaker.Manager
+
+	// Image proxy cache settings
+	ImageCacheTTL   time.Duration // Disk TTL for cached images (0 = never expire)
+	ImageCacheMemMB int           // Max memory for image cache in MB (default 50)
 }
 
 // Server is the HTTP server for kefw2ui.
@@ -42,6 +46,9 @@ type Server struct {
 
 	// Shared cache for Airable content (UPnP, Radio, Podcasts)
 	airableCache *kefw2.RowsCache
+
+	// Shared cache for proxied images (memory + disk)
+	imageCache *ImageCache
 
 	// SSE clients
 	sseClients   map[chan []byte]struct{}
@@ -116,6 +123,16 @@ func New(opts Options) *Server {
 	// Initialize shared Airable cache (disk-persisted for performance)
 	airableCache := kefw2.NewRowsCache(kefw2.DefaultDiskCacheConfig())
 
+	// Resolve image cache config from options
+	imgDiskTTL := opts.ImageCacheTTL
+	if imgDiskTTL < 0 {
+		imgDiskTTL = 0 // treat negative as default (handled by NewImageCache)
+	}
+	imgMemMB := opts.ImageCacheMemMB
+	if imgMemMB <= 0 {
+		imgMemMB = 50
+	}
+
 	s := &Server{
 		opts:         opts,
 		mux:          http.NewServeMux(),
@@ -123,6 +140,11 @@ func New(opts Options) *Server {
 		manager:      opts.SpeakerManager,
 		playlists:    playlistMgr,
 		airableCache: airableCache,
+		imageCache: NewImageCache(ImageCacheConfig{
+			MaxMemBytes: int64(imgMemMB) << 20,
+			MemTTL:      1 * time.Hour,
+			DiskTTL:     imgDiskTTL,
+		}),
 	}
 
 	s.registerRoutes()
@@ -221,6 +243,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/settings/upnp", s.handleUPnPSettings)
 	s.mux.HandleFunc("/api/upnp/servers", s.handleUPnPServers)
 	s.mux.HandleFunc("/api/upnp/containers", s.handleUPnPContainers)
+	s.mux.HandleFunc("/api/upnp/reindex", s.handleUPnPReindex)
 
 	// SSE endpoint
 	s.mux.HandleFunc("/events", s.handleSSE)
@@ -842,6 +865,17 @@ func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check cache (memory then disk)
+	if cached := s.imageCache.Get(targetURL); cached != nil {
+		if cached.ContentType != "" {
+			w.Header().Set("Content-Type", cached.ContentType)
+		}
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("X-Cache", "HIT")
+		_, _ = w.Write(cached.Data)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -864,13 +898,25 @@ func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		w.Header().Set("Content-Type", ct)
+	// Read the body (limited to 10MB)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		http.Error(w, "Failed to read image", http.StatusBadGateway)
+		return
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+
+	// Store in cache
+	s.imageCache.Put(targetURL, data, contentType)
+
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
 	}
 	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("X-Cache", "MISS")
 
-	// Limit response to 10MB to prevent abuse
-	_, _ = io.Copy(w, io.LimitReader(resp.Body, 10<<20))
+	_, _ = w.Write(data)
 }
 
 // handlePlayer returns the current player state.
@@ -2189,7 +2235,7 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 			return
 		}
 
-		results := kefw2.SearchTracks(index, searchQuery, 100)
+		results := kefw2.SearchTracks(index, searchQuery, 1000)
 		if len(results) == 0 {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2286,20 +2332,20 @@ func (s *Server) handleBrowseUPnP(w http.ResponseWriter, r *http.Request, subpat
 	switch {
 	case itemPath != "":
 		// Direct path navigation takes priority
-		resp, err = airable.BrowseContainer(itemPath)
+		resp, err = airable.BrowseContainerAll(itemPath)
 	case subpath == "":
 		// List media servers (fallback if no browse container configured)
 		resp, err = airable.GetMediaServers()
 	case strings.HasPrefix(subpath, "upnp:"):
 		// Full API path in subpath
-		resp, err = airable.BrowseContainer(subpath)
+		resp, err = airable.BrowseContainerAll(subpath)
 	default:
 		// Try to match by server name
 		resp, err = airable.GetMediaServers()
 		if err == nil && len(resp.Rows) > 0 {
 			for _, server := range resp.Rows {
 				if server.Title == subpath && server.Type != "query" {
-					resp, err = airable.BrowseContainer(server.Path)
+					resp, err = airable.BrowseContainerAll(server.Path)
 					break
 				}
 			}
@@ -3121,6 +3167,59 @@ func (s *Server) handleUPnPContainers(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"path":       containerPath,
 		"containers": containers,
+	})
+}
+
+// handleUPnPReindex rebuilds the UPnP track search index.
+func (s *Server) handleUPnPReindex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	spk := s.manager.GetActiveSpeaker()
+	if spk == nil {
+		s.jsonError(w, "No active speaker", http.StatusServiceUnavailable)
+		return
+	}
+
+	if s.opts.Config == nil {
+		s.jsonError(w, "Config not available", http.StatusInternalServerError)
+		return
+	}
+
+	upnp := s.opts.Config.GetUPnPConfig()
+	if upnp.DefaultServerPath == "" {
+		s.jsonError(w, "No media server configured", http.StatusBadRequest)
+		return
+	}
+
+	client := s.getAirableClient(spk)
+
+	log.Printf("Starting media index rebuild for server %q (container: %q)", upnp.DefaultServer, upnp.IndexContainer)
+
+	index, err := kefw2.BuildTrackIndex(client, upnp.DefaultServerPath, upnp.DefaultServer, upnp.IndexContainer, nil)
+	if err != nil {
+		log.Printf("Media index rebuild failed: %v", err)
+		s.jsonError(w, "Indexing failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := kefw2.SaveTrackIndex(index); err != nil {
+		log.Printf("Failed to save track index: %v", err)
+		s.jsonError(w, "Failed to save index: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	kefw2.ClearTrackIndexCache()
+
+	log.Printf("Media index rebuilt: %d tracks from %q", index.TrackCount, upnp.DefaultServer)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":     "ok",
+		"trackCount": index.TrackCount,
+		"serverName": index.ServerName,
 	})
 }
 

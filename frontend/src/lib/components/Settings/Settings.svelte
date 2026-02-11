@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { toasts } from '$lib/stores/toast';
 	import {
 		Settings as SettingsIcon,
 		X,
@@ -91,6 +92,7 @@
 	let loadingServers = $state(false);
 	let loadingBrowseContainers = $state(false);
 	let loadingIndexContainers = $state(false);
+	let reindexing = $state(false);
 	
 	// Editable UPnP settings
 	let selectedServer = $state<string>('');
@@ -878,6 +880,40 @@
 										<span class="font-medium">{indexContainerPath}</span>
 									</div>
 								{/if}
+							</div>
+						</div>
+
+						<!-- Rebuild Search Index -->
+						<div>
+							<h3 class="mb-3 text-sm font-medium text-zinc-300">Rebuild Search Index</h3>
+							<div class="rounded-lg border border-zinc-800 bg-zinc-800/50 p-4">
+								<p class="mb-3 text-xs text-zinc-500">
+									Build or rebuild the search index for your media server. This scans all tracks
+									and may take a while depending on the size of your library.
+								</p>
+								<button
+									class="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+									onclick={async () => {
+										reindexing = true;
+										try {
+											const result = await api.reindexMedia();
+											toasts.success(`Indexed ${result.trackCount} tracks from ${result.serverName}`);
+										} catch (e: any) {
+											toasts.error(e?.message || 'Indexing failed');
+										} finally {
+											reindexing = false;
+										}
+									}}
+									disabled={reindexing}
+								>
+									{#if reindexing}
+										<Loader2 class="h-4 w-4 animate-spin" />
+										Indexing...
+									{:else}
+										<RefreshCw class="h-4 w-4" />
+										Rebuild Index
+									{/if}
+								</button>
 							</div>
 						</div>
 					{/if}

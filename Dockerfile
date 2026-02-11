@@ -20,6 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o kefw2ui .
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates tzdata
 RUN adduser -D -u 1000 kefw2ui
+RUN mkdir -p /home/kefw2ui/.config/kefw2 /home/kefw2ui/.cache/kefw2 && chown -R kefw2ui:kefw2ui /home/kefw2ui
 USER kefw2ui
 WORKDIR /home/kefw2ui
 COPY --from=backend /app/kefw2ui /usr/local/bin/
