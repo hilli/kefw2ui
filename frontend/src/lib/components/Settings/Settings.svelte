@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { toasts } from '$lib/stores/toast';
+	import { reindexState, resetReindex } from '$lib/stores/reindex';
 	import {
 		Settings as SettingsIcon,
 		X,
@@ -92,7 +93,7 @@
 	let loadingServers = $state(false);
 	let loadingBrowseContainers = $state(false);
 	let loadingIndexContainers = $state(false);
-	let reindexing = $state(false);
+	let reindexing = $derived($reindexState.active);
 	
 	// Editable UPnP settings
 	let selectedServer = $state<string>('');
@@ -894,14 +895,10 @@
 								<button
 									class="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
 									onclick={async () => {
-										reindexing = true;
 										try {
-											const result = await api.reindexMedia();
-											toasts.success(`Indexed ${result.trackCount} tracks from ${result.serverName}`);
+											await api.reindexMedia();
 										} catch (e: any) {
-											toasts.error(e?.message || 'Indexing failed');
-										} finally {
-											reindexing = false;
+											toasts.error(e?.message || 'Failed to start indexing');
 										}
 									}}
 									disabled={reindexing}
@@ -914,6 +911,20 @@
 										Rebuild Index
 									{/if}
 								</button>
+								{#if $reindexState.status === 'progress'}
+									<div class="mt-3 space-y-1">
+										<div class="flex items-center gap-2 text-xs text-zinc-400">
+											<span>{$reindexState.containersScanned} folders scanned</span>
+											<span class="text-zinc-600">|</span>
+											<span>{$reindexState.tracksFound} tracks found</span>
+										</div>
+										{#if $reindexState.currentContainer}
+											<div class="truncate text-xs text-zinc-500">
+												Scanning: {$reindexState.currentContainer}
+											</div>
+										{/if}
+									</div>
+								{/if}
 							</div>
 						</div>
 					{/if}
@@ -948,6 +959,13 @@
 						{#if appVersion}
 							<p class="mt-1 text-xs text-zinc-500">Version {appVersion}</p>
 						{/if}
+						<p class="text-sm text-zinc-400">Created by: <a
+								href="https://github.com/hilli"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="block text-green-400 hover:text-green-300"
+								alt="Jens Hilligsøe's GitHub page">Jens Hilligsøe</a>
+						</p>						
 					</div>
 
 					<div class="rounded-lg border border-zinc-800 bg-zinc-800/50 p-4">
@@ -963,7 +981,7 @@
 						<h4 class="mb-2 text-sm font-medium text-zinc-300">Links</h4>
 						<div class="space-y-2 text-sm">
 							<a
-								href="https://github.com/hilli/go-kef-w2"
+								href="https://github.com/hilli/kefw2ui"
 								target="_blank"
 								rel="noopener noreferrer"
 								class="block text-green-400 hover:text-green-300"

@@ -727,11 +727,7 @@ class APIClient {
 		return this.request(`/upnp/containers${query ? '?' + query : ''}`);
 	}
 
-	async reindexMedia(): Promise<{
-		status: string;
-		trackCount: number;
-		serverName: string;
-	}> {
+	async reindexMedia(): Promise<{ status: string }> {
 		return this.request('/upnp/reindex', { method: 'POST' });
 	}
 }

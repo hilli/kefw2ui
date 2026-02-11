@@ -10,6 +10,8 @@ import {
 } from '$lib/stores/player';
 import { activeSpeaker, updateSpeakers } from '$lib/stores/speakers';
 import { queueRefresh, playModeRefresh, playlistsRefresh } from '$lib/stores/queue';
+import { updateReindex } from '$lib/stores/reindex';
+import { toasts } from '$lib/stores/toast';
 import { api } from '$lib/api/client';
 
 let eventSource: EventSource | null = null;
@@ -309,6 +311,26 @@ function handleEvent(message: { type: string; data: unknown }) {
 		case 'speakerHealth':
 			updateSpeakerHealth((message.data as { connected: boolean }).connected);
 			break;
+		case 'reindex': {
+			const reindexData = message.data as {
+				status: string;
+				containersScanned?: number;
+				tracksFound?: number;
+				currentContainer?: string;
+				trackCount?: number;
+				serverName?: string;
+				error?: string;
+			};
+			updateReindex(reindexData);
+			if (reindexData.status === 'complete') {
+				toasts.success(
+					`Indexed ${reindexData.trackCount} tracks from ${reindexData.serverName}`
+				);
+			} else if (reindexData.status === 'error') {
+				toasts.error(reindexData.error || 'Indexing failed');
+			}
+			break;
+		}
 		default:
 			console.log('Unknown event type:', message.type);
 	}

@@ -53,6 +53,10 @@ type Server struct {
 	// SSE clients
 	sseClients   map[chan []byte]struct{}
 	sseClientsMu sync.RWMutex
+
+	// Reindex state – prevents concurrent reindexing
+	reindexMu  sync.Mutex
+	reindexing bool
 }
 
 // Content type constants used across browse/queue handlers.
@@ -3170,57 +3174,125 @@ func (s *Server) handleUPnPContainers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleUPnPReindex rebuilds the UPnP track search index.
+// broadcastReindex sends a reindex SSE event to all connected clients.
+func (s *Server) broadcastReindex(data map[string]any) {
+	payload, err := json.Marshal(map[string]any{
+		"type": "reindex",
+		"data": data,
+	})
+	if err != nil {
+		return
+	}
+	s.broadcastSSE(payload)
+}
+
+// handleUPnPReindex rebuilds the UPnP track search index asynchronously.
+// Returns 202 Accepted immediately and broadcasts progress via SSE.
 func (s *Server) handleUPnPReindex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Prevent concurrent reindexing
+	s.reindexMu.Lock()
+	if s.reindexing {
+		s.reindexMu.Unlock()
+		s.jsonError(w, "Reindexing already in progress", http.StatusConflict)
+		return
+	}
+	s.reindexing = true
+	s.reindexMu.Unlock()
+
 	spk := s.manager.GetActiveSpeaker()
 	if spk == nil {
+		s.reindexMu.Lock()
+		s.reindexing = false
+		s.reindexMu.Unlock()
 		s.jsonError(w, "No active speaker", http.StatusServiceUnavailable)
 		return
 	}
 
 	if s.opts.Config == nil {
+		s.reindexMu.Lock()
+		s.reindexing = false
+		s.reindexMu.Unlock()
 		s.jsonError(w, "Config not available", http.StatusInternalServerError)
 		return
 	}
 
 	upnp := s.opts.Config.GetUPnPConfig()
 	if upnp.DefaultServerPath == "" {
+		s.reindexMu.Lock()
+		s.reindexing = false
+		s.reindexMu.Unlock()
 		s.jsonError(w, "No media server configured", http.StatusBadRequest)
 		return
 	}
 
-	client := s.getAirableClient(spk)
-
-	log.Printf("Starting media index rebuild for server %q (container: %q)", upnp.DefaultServer, upnp.IndexContainer)
-
-	index, err := kefw2.BuildTrackIndex(client, upnp.DefaultServerPath, upnp.DefaultServer, upnp.IndexContainer, nil)
-	if err != nil {
-		log.Printf("Media index rebuild failed: %v", err)
-		s.jsonError(w, "Indexing failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := kefw2.SaveTrackIndex(index); err != nil {
-		log.Printf("Failed to save track index: %v", err)
-		s.jsonError(w, "Failed to save index: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	kefw2.ClearTrackIndexCache()
-
-	log.Printf("Media index rebuilt: %d tracks from %q", index.TrackCount, upnp.DefaultServer)
-
+	// Return 202 immediately, run indexing in background
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":     "ok",
-		"trackCount": index.TrackCount,
-		"serverName": index.ServerName,
+		"status": "started",
 	})
+
+	// Broadcast that reindex has started
+	s.broadcastReindex(map[string]any{
+		"status":            "progress",
+		"containersScanned": 0,
+		"tracksFound":       0,
+		"currentContainer":  "",
+	})
+
+	go func() {
+		defer func() {
+			s.reindexMu.Lock()
+			s.reindexing = false
+			s.reindexMu.Unlock()
+		}()
+
+		client := s.getAirableClient(spk)
+		log.Printf("Starting media index rebuild for server %q (container: %q)", upnp.DefaultServer, upnp.IndexContainer)
+
+		// Progress callback broadcasts SSE events
+		progress := func(containersScanned, tracksFound int, currentContainer string) {
+			s.broadcastReindex(map[string]any{
+				"status":            "progress",
+				"containersScanned": containersScanned,
+				"tracksFound":       tracksFound,
+				"currentContainer":  currentContainer,
+			})
+		}
+
+		index, err := kefw2.BuildTrackIndex(client, upnp.DefaultServerPath, upnp.DefaultServer, upnp.IndexContainer, progress)
+		if err != nil {
+			log.Printf("Media index rebuild failed: %v", err)
+			s.broadcastReindex(map[string]any{
+				"status": "error",
+				"error":  err.Error(),
+			})
+			return
+		}
+
+		if err := kefw2.SaveTrackIndex(index); err != nil {
+			log.Printf("Failed to save track index: %v", err)
+			s.broadcastReindex(map[string]any{
+				"status": "error",
+				"error":  "Failed to save index: " + err.Error(),
+			})
+			return
+		}
+
+		kefw2.ClearTrackIndexCache()
+		log.Printf("Media index rebuilt: %d tracks from %q", index.TrackCount, upnp.DefaultServer)
+
+		s.broadcastReindex(map[string]any{
+			"status":     "complete",
+			"trackCount": index.TrackCount,
+			"serverName": index.ServerName,
+		})
+	}()
 }
 
 // handleSSE handles Server-Sent Events connections.
