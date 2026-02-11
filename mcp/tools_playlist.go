@@ -295,7 +295,7 @@ func (h *Handler) handleSaveQueueAsPlaylist(_ context.Context, req mcppkg.CallTo
 	})), nil
 }
 
-func (h *Handler) handleLoadPlaylist(_ context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+func (h *Handler) handleLoadPlaylist(ctx context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
 	if h.playlists == nil {
 		return mcppkg.NewToolResultError("Playlist manager not available"), nil
 	}
@@ -396,14 +396,31 @@ func (h *Handler) handleLoadPlaylist(_ context.Context, req mcppkg.CallToolReque
 		return mcppkg.NewToolResultError("No playable tracks in playlist"), nil
 	}
 
-	if err := airable.AddToQueue(contentItems, true); err != nil {
+	if err := airable.AddToQueue(contentItems, false); err != nil {
 		return mcppkg.NewToolResultError("Failed to add tracks to queue: " + err.Error()), nil
+	}
+
+	// Start playback if we replaced the queue (not appending)
+	action := ""
+	if !appendMode {
+		result, playErr := airable.PlayOrResumeFromQueue(ctx)
+		if playErr != nil {
+			// Tracks loaded but playback failed — report partial success
+			return mcppkg.NewToolResultText(jsonString(map[string]any{
+				"status":     "ok",
+				"trackCount": len(contentItems),
+				"skipped":    skipped,
+				"warning":    "Tracks loaded but failed to start playback: " + playErr.Error(),
+			})), nil
+		}
+		action = string(result.Action)
 	}
 
 	return mcppkg.NewToolResultText(jsonString(map[string]any{
 		"status":     "ok",
 		"trackCount": len(contentItems),
 		"skipped":    skipped,
+		"action":     action,
 	})), nil
 }
 

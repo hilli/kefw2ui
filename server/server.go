@@ -2023,10 +2023,21 @@ func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add tracks to queue and start playing
-	if err := airable.AddToQueue(contentItems, true); err != nil {
+	// Add tracks to queue
+	if err := airable.AddToQueue(contentItems, false); err != nil {
 		s.jsonError(w, "Failed to add tracks to queue: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Start playback if we replaced the queue (not appending)
+	action := ""
+	if !req.Append {
+		result, err := airable.PlayOrResumeFromQueue(r.Context())
+		if err != nil {
+			log.Printf("Warning: tracks loaded but failed to start playback: %v", err)
+		} else {
+			action = string(result.Action)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2034,6 +2045,7 @@ func (s *Server) handleLoadPlaylist(w http.ResponseWriter, r *http.Request) {
 		"status":     "ok",
 		"trackCount": len(contentItems),
 		"skipped":    skipped,
+		"action":     action,
 	})
 }
 
