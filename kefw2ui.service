@@ -25,8 +25,8 @@ ProtectControlGroups=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 
-# Allow reading config from user's home directory
-ReadWritePaths=/home/kefw2ui/.config/kefw2
+# Allow reading/writing config and cache from user's home directory
+ReadWritePaths=/home/kefw2ui/.config/kefw2 /home/kefw2ui/.cache/kefw2
 
 # Logging
 StandardOutput=journal
