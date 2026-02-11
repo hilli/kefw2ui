@@ -190,7 +190,7 @@ A built-in MCP server at `/api/mcp` (Streamable HTTP transport) exposes the full
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--bind` | `KEFW2UI_BIND` | `0.0.0.0` | Address to bind to |
-| `--port` | - | `8080` | Port to listen on |
+| `--port` | `KEFW2UI_PORT` | `8080` | Port to listen on |
 | `--speaker-ips` | `KEFW2UI_SPEAKER_IPS` | - | Comma-separated speaker IP addresses |
 | `--no-discovery` | `KEFW2UI_NO_DISCOVERY` | `false` | Skip mDNS speaker discovery |
 | `--image-cache-ttl` | `KEFW2UI_IMAGE_CACHE_TTL` | `7d` | Image cache disk TTL (`0` = never expire, e.g. `1h`, `7d`, `30d`) |

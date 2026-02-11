@@ -964,7 +964,7 @@
 								target="_blank"
 								rel="noopener noreferrer"
 								class="block text-green-400 hover:text-green-300"
-								alt="Jens Hilligsøe's GitHub page">Jens Hilligsøe</a>
+								title="Jens Hilligsøe's GitHub page">Jens Hilligsøe</a>
 						</p>						
 					</div>
 

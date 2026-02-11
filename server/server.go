@@ -173,6 +173,16 @@ func (s *Server) getAirableClient(spk *kefw2.KEFSpeaker) *kefw2.AirableClient {
 	}))
 }
 
+// getReindexAirableClient returns an AirableClient configured for reindexing.
+// Uses a longer HTTP timeout (60s) since indexing large libraries involves many
+// sequential browse requests that can be slow on NAS devices.
+func (s *Server) getReindexAirableClient(spk *kefw2.KEFSpeaker) *kefw2.AirableClient {
+	return kefw2.NewAirableClient(spk, kefw2.WithCache(kefw2.CacheConfig{
+		Enabled: true,
+		TTL:     5 * time.Minute,
+	}), kefw2.WithHTTPTimeout(60*time.Second))
+}
+
 // getCachedAirableClient returns an AirableClient with the server's shared disk cache.
 // Use this for browse operations that benefit from persistent caching.
 func (s *Server) getCachedAirableClient(spk *kefw2.KEFSpeaker) *kefw2.AirableClient {
@@ -3252,7 +3262,7 @@ func (s *Server) handleUPnPReindex(w http.ResponseWriter, r *http.Request) {
 			s.reindexMu.Unlock()
 		}()
 
-		client := s.getAirableClient(spk)
+		client := s.getReindexAirableClient(spk)
 		log.Printf("Starting media index rebuild for server %q (container: %q)", upnp.DefaultServer, upnp.IndexContainer)
 
 		// Progress callback broadcasts SSE events

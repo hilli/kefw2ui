@@ -25,6 +25,8 @@ services:
     restart: unless-stopped
     environment:
       - TZ=${TZ:-UTC}
+      # - KEFW2UI_PORT=8080
+      # - KEFW2UI_BIND=0.0.0.0
       # Speaker IPs (comma-separated, use with KEFW2UI_NO_DISCOVERY to skip mDNS)
       - KEFW2UI_SPEAKER_IPS=10.0.0.149,10.0.0.93
       - KEFW2UI_NO_DISCOVERY=true

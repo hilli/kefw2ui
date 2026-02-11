@@ -93,7 +93,7 @@ func main() {
 	)
 
 	flag.StringVar(&bind, "bind", envOrDefault("KEFW2UI_BIND", "0.0.0.0"), "Address to bind to")
-	flag.IntVar(&port, "port", 8080, "Port to listen on")
+	flag.IntVar(&port, "port", envInt("KEFW2UI_PORT", 8080), "Port to listen on")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 
 	// Speaker flags (env vars provide defaults)
