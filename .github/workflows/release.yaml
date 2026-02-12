@@ -43,8 +43,7 @@ jobs:
           version: latest
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
       # Prepare a clean binary layout for the multi-arch Docker build.
       # Goreleaser outputs to dist/kefw2ui_linux_amd64_v1/ and
@@ -68,19 +67,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/hilli/kefw2ui
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-          labels: |
-            org.opencontainers.image.title=kefw2ui
-            org.opencontainers.image.description=Web UI for controlling KEF W2 speakers
-            org.opencontainers.image.source=https://github.com/hilli/kefw2ui
+      # - name: Docker meta
+      #   id: meta
+      #   uses: docker/metadata-action@v5
+      #   with:
+      #     images: ghcr.io/hilli/kefw2ui
+      #     tags: |
+      #       type=semver,pattern={{version}}
+      #       type=semver,pattern={{major}}.{{minor}}
+      #       type=raw,value=latest,enable={{is_default_branch}}
+      #     labels: |
+      #       org.opencontainers.image.title=kefw2ui
+      #       org.opencontainers.image.description=Web UI for controlling KEF W2 speakers
+      #       org.opencontainers.image.source=https://github.com/hilli/kefw2ui
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6

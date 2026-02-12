@@ -19,9 +19,12 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
+    goarm:
+      - 7
     mod_timestamp: "{{ .CommitTimestamp }}"
     flags:
       - -trimpath
@@ -71,3 +74,53 @@ homebrew_casks:
 
 changelog:
   disable: true
+
+nfpms:
+  - file_name_template: "{{ .ConventionalFileName }}"
+    id: packages
+    homepage: https://github.com/hilli/kefw2ui
+    description: |-
+      Web UI for controlling KEF W2 speakers (LSX Wireless II (LT)/LS50 Wireless II/LS60 Wireless)
+    maintainer: Jens Hilligsøe <kefw2@hilli.dk>
+    license: MIT
+    vendor: Jens Hilligsøe
+    bindir: /usr/bin
+    section: utils
+    contents:
+      - src: ./LICENSE
+        dst: /usr/share/doc/kefw2/copyright
+        file_info:
+          mode: 0644
+    formats:
+      - apk
+      - deb
+      - rpm
+      - archlinux
+    deb:
+      lintian_overrides:
+        - statically-linked-binary
+        - changelog-file-missing-in-native-package
+
+dockers_v2:
+  - images:
+      - "ghcr.io/hilli/kefw2ui"
+    id: kefw2ui
+    dockerfile: Dockerfile.goreleaser
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    tags:
+      - "v{{.Version}}"
+      - latest
+      - "v{{.Major}}.{{.Minor}}"
+    sbom: true
+    labels:
+      "org.opencontainers.image.description": "Web UI for controlling KEF W2 speakers"
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.name": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.source": "{{.GitURL}}"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}"

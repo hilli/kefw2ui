@@ -9,8 +9,12 @@ RUN apk add --no-cache ca-certificates tzdata
 RUN adduser -D -u 1000 kefw2ui
 RUN mkdir -p /home/kefw2ui/.config/kefw2 /home/kefw2ui/.cache/kefw2 && chown -R kefw2ui:kefw2ui /home/kefw2ui
 
-ARG TARGETARCH
-COPY dist/linux_${TARGETARCH}/kefw2ui /usr/local/bin/kefw2ui
+# ARG TARGETARCH
+# COPY dist/kefw2ui_linux_${TARGETARCH}/kefw2ui /usr/local/bin/kefw2ui
+
+RUN echo dist/${TARGETPLATFORM}/kefw2ui /usr/bin/kefw2ui
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/kefw2ui /usr/bin/kefw2ui
 
 USER kefw2ui
 WORKDIR /home/kefw2ui
